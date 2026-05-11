@@ -2,8 +2,41 @@ import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useRef } from 'react';
 import type { ImageData, Settings } from '../types';
 
-/** Preloaded image cache */
+// ---- LRU Cache with size limit ----
+
+const MAX_CACHE_SIZE = 5;
+
+/** Ordered map: oldest → newest. When full, evict the oldest entry. */
 const preloadCache = new Map<string, string>();
+
+function cacheSet(key: string, value: string) {
+  // If the key already exists, delete and re-insert to move it to the end (most recent)
+  if (preloadCache.has(key)) {
+    preloadCache.delete(key);
+  }
+  // Evict oldest if at capacity
+  while (preloadCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = preloadCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      preloadCache.delete(oldestKey);
+    } else {
+      break;
+    }
+  }
+  preloadCache.set(key, value);
+}
+
+function cacheGet(key: string): string | undefined {
+  const value = preloadCache.get(key);
+  if (value !== undefined) {
+    // Move to end (most recently used)
+    preloadCache.delete(key);
+    preloadCache.set(key, value);
+  }
+  return value;
+}
+
+// ---- Hook ----
 
 export function useImageLoader() {
   const loadingRef = useRef(false);
@@ -14,19 +47,19 @@ export function useImageLoader() {
     naturalWidth: number;
     naturalHeight: number;
   }> => {
-    // Check cache first
-    if (preloadCache.has(filePath)) {
-      const src = preloadCache.get(filePath)!;
+    // Check LRU cache first
+    const cached = cacheGet(filePath);
+    if (cached) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve({
-          src,
+          src: cached,
           fileName: filePath.split(/[\\/]/).pop() || 'unknown',
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
         });
         img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
-        img.src = src;
+        img.src = cached;
       });
     }
 
@@ -36,8 +69,8 @@ export function useImageLoader() {
       const data = await invoke<ImageData>('read_image', { path: filePath });
       const src = `data:${data.mimeType};base64,${data.base64}`;
 
-      // Cache it
-      preloadCache.set(filePath, src);
+      // LRU cache set (auto-evicts oldest if full)
+      cacheSet(filePath, src);
 
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -67,7 +100,7 @@ export function useImageLoader() {
       if (!preloadCache.has(p)) {
         try {
           const data = await invoke<ImageData>('read_image', { path: p });
-          preloadCache.set(p, `data:${data.mimeType};base64,${data.base64}`);
+          cacheSet(p, `data:${data.mimeType};base64,${data.base64}`);
         } catch {
           // Silently skip failed preloads
         }

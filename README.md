@@ -1,7 +1,73 @@
-# Tauri + React + Typescript
+# PlainView
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+광고 없는 초경량 이미지 뷰어 for Windows
 
-## Recommended IDE Setup
+> 이미지를 열면 화면에는 이미지 자체만 보인다.
+> 마우스를 올렸을 때만 최소 조작 버튼이 나타난다.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 지원 포맷
+
+PNG, JPG, JPEG, WebP, BMP, GIF
+
+## 키보드 단축키
+
+| 키 | 기능 |
+|---|---|
+| `Esc` | 닫기 |
+| `←` / `Backspace` | 이전 이미지 |
+| `→` / `Space` | 다음 이미지 |
+| `+` | 확대 |
+| `-` | 축소 |
+| `0` | 원본 크기 |
+| `F` | 화면 맞춤 |
+| `T` | 항상 위 고정 |
+| `R` | 시계 방향 90° 회전 |
+
+## 주요 기능
+
+- **테두리 없는 창** — 이미지만 보이는 미니멀 UI
+- **마우스 오버 오버레이** — 필요할 때만 반투명 조작 버튼 표시 (2초 후 자동 숨김)
+- **폴더 내 탐색** — 같은 폴더 이미지를 자동으로 목록화, 이전/다음 이동
+- **확대/축소** — 마우스 휠, 키보드, 버튼으로 확대/축소
+- **이미지 패닝** — 확대 시 드래그로 이미지 이동
+- **창 이동** — 기본 배율에서 드래그로 창 이동, Alt+드래그로 강제 창 이동
+- **항상 위 고정** — 다른 창 위에 이미지를 띄워놓기
+- **회전** — 보기 전용 90도 회전
+- **드래그 앤 드롭** — 이미지 파일을 끌어다 놓으면 열기
+- **설정 저장** — 창 위치, 항상 위 고정 상태 등 자동 저장
+
+## 기술 스택
+
+- [Tauri v2](https://tauri.app/) — 경량 데스크톱 앱 프레임워크
+- [React 19](https://react.dev/) + TypeScript
+- [Vite](https://vite.dev/) — 프론트엔드 빌드
+
+## 개발 환경
+
+```
+Rust 1.94+, Node.js 20+, npm 10+
+```
+
+## 실행 방법
+
+```bash
+# 의존성 설치
+npm install
+
+# 개발 모드 실행
+npm run tauri dev
+
+# 프로덕션 빌드
+npm run tauri build
+```
+
+## 현재 제한사항
+
+- 파일 확장자 연결은 설치 후 수동 설정 필요 (Windows 기본 앱 설정)
+- 이미지 편집 기능 없음 (보기 전용)
+- GIF 재생 제어 불가 (브라우저 기본 동작)
+- 이미지는 base64로 로딩 (LRU 캐시 5장 제한)
+
+## 라이선스
+
+MIT

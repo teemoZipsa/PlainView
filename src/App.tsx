@@ -49,6 +49,9 @@ function App() {
   const dragModeRef = useRef<DragMode>('none');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // [P2] Race condition prevention: monotonic request counter
+  const requestIdRef = useRef(0);
+
   const { loadImage, preloadImages, scanFolder, loadSettings, saveSettings, getCliArgs } =
     useImageLoader();
 
@@ -65,7 +68,6 @@ function App() {
 
   const getRenderedSize = useCallback(
     (naturalW: number, naturalH: number, zoom: number, rotation: Rotation) => {
-      // After rotation, effective dimensions swap for 90/270
       const isRotated = rotation === 90 || rotation === 270;
       const effectiveW = isRotated ? naturalH : naturalW;
       const effectiveH = isRotated ? naturalW : naturalH;
@@ -77,28 +79,40 @@ function App() {
     []
   );
 
-  const calculateFitZoom = useCallback(
-    (naturalW: number, naturalH: number, rotation: Rotation) => {
-      const viewport = getViewportSize();
+  /** Calculate fit zoom for a given viewport size (not reading window.innerWidth) */
+  const calculateFitZoomForSize = useCallback(
+    (naturalW: number, naturalH: number, rotation: Rotation, vpW: number, vpH: number) => {
       const isRotated = rotation === 90 || rotation === 270;
       const effectiveW = isRotated ? naturalH : naturalW;
       const effectiveH = isRotated ? naturalW : naturalH;
 
-      if (effectiveW <= viewport.width && effectiveH <= viewport.height) {
-        return 1; // Image fits at original size
+      if (effectiveW <= vpW && effectiveH <= vpH) {
+        return 1;
       }
 
-      const scaleX = viewport.width / effectiveW;
-      const scaleY = viewport.height / effectiveH;
+      const scaleX = vpW / effectiveW;
+      const scaleY = vpH / effectiveH;
       return Math.min(scaleX, scaleY);
     },
-    [getViewportSize]
+    []
+  );
+
+  /** Calculate fit zoom using current window size (for runtime recalculation) */
+  const calculateFitZoom = useCallback(
+    (naturalW: number, naturalH: number, rotation: Rotation) => {
+      const viewport = getViewportSize();
+      return calculateFitZoomForSize(naturalW, naturalH, rotation, viewport.width, viewport.height);
+    },
+    [getViewportSize, calculateFitZoomForSize]
   );
 
   // ---- Image loading ----
 
   const openImage = useCallback(
     async (filePath: string, imageList?: string[], index?: number) => {
+      // [P2] Increment request counter before starting
+      const myRequestId = ++requestIdRef.current;
+
       setState((prev) => ({
         ...prev,
         isLoading: true,
@@ -109,10 +123,14 @@ function App() {
 
       try {
         const result = await loadImage(filePath);
+
+        // [P2] Stale request guard — abort if a newer request was issued
+        if (requestIdRef.current !== myRequestId) return;
+
         const naturalW = result.naturalWidth;
         const naturalH = result.naturalHeight;
 
-        // Calculate initial zoom
+        // Calculate initial zoom based on screen size (stable, not window-dependent)
         const screenW = window.screen.availWidth * SCREEN_FIT_RATIO;
         const screenH = window.screen.availHeight * SCREEN_FIT_RATIO;
 
@@ -129,14 +147,31 @@ function App() {
 
         try {
           await invoke('resize_window', { width: winW, height: winH });
-          const appWindow = getCurrentWindow();
-          await appWindow.center();
+
+          // [P2] Apply saved window position if available, otherwise center
+          if (
+            settingsRef.current.rememberWindowPosition &&
+            settingsRef.current.lastWindowBounds
+          ) {
+            const bounds = settingsRef.current.lastWindowBounds;
+            const appWindow = getCurrentWindow();
+            await appWindow.setPosition(
+              new (await import('@tauri-apps/api/dpi')).LogicalPosition(bounds.x, bounds.y)
+            );
+          } else {
+            const appWindow = getCurrentWindow();
+            await appWindow.center();
+          }
         } catch {
-          // Window resize may fail, continue
+          // Window operations may fail, continue
         }
 
-        // Recalculate fit zoom after window resize
-        const fitZoom = calculateFitZoom(naturalW, naturalH, 0);
+        // [P2] Stale request guard after async window ops
+        if (requestIdRef.current !== myRequestId) return;
+
+        // [P2] FIX: Use the TARGET window size for fit zoom calculation,
+        // not window.innerWidth which may not have updated yet
+        const fitZoom = calculateFitZoomForSize(naturalW, naturalH, 0, winW, winH);
 
         setState((prev) => ({
           ...prev,
@@ -164,6 +199,9 @@ function App() {
           preloadImages(toPreload);
         }
       } catch (err: unknown) {
+        // [P2] Stale request guard on error path too
+        if (requestIdRef.current !== myRequestId) return;
+
         const message = err instanceof Error ? err.message : String(err);
         setState((prev) => ({
           ...prev,
@@ -172,7 +210,27 @@ function App() {
         }));
       }
     },
-    [loadImage, preloadImages, calculateFitZoom, state.imageList, state.currentIndex]
+    [loadImage, preloadImages, calculateFitZoomForSize, state.imageList, state.currentIndex]
+  );
+
+  // ---- Tauri native drag-and-drop ----
+
+  const handleFileDrop = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      const filePath = paths[0];
+
+      try {
+        const imageList = await scanFolder(filePath);
+        const index = imageList.findIndex(
+          (p) => p.toLowerCase() === filePath.toLowerCase()
+        );
+        openImage(filePath, imageList, Math.max(0, index));
+      } catch {
+        openImage(filePath, [filePath], 0);
+      }
+    },
+    [scanFolder, openImage]
   );
 
   // ---- Navigation ----
@@ -203,14 +261,14 @@ function App() {
   const zoomIn = useCallback(() => {
     setState((prev) => {
       const newZoom = Math.min(MAX_ZOOM, prev.zoom * (1 + ZOOM_STEP));
-      return { ...prev, zoom: newZoom, fitMode: 'auto' };
+      return { ...prev, zoom: newZoom, fitMode: 'auto' as const };
     });
   }, []);
 
   const zoomOut = useCallback(() => {
     setState((prev) => {
       const newZoom = Math.max(MIN_ZOOM, prev.zoom * (1 - ZOOM_STEP));
-      return { ...prev, zoom: newZoom, fitMode: 'auto', panOffset: { x: 0, y: 0 } };
+      return { ...prev, zoom: newZoom, fitMode: 'auto' as const, panOffset: { x: 0, y: 0 } };
     });
   }, []);
 
@@ -218,7 +276,7 @@ function App() {
     setState((prev) => ({
       ...prev,
       zoom: 1,
-      fitMode: 'original',
+      fitMode: 'original' as const,
       panOffset: { x: 0, y: 0 },
     }));
   }, []);
@@ -233,7 +291,7 @@ function App() {
       return {
         ...prev,
         zoom: fitZoom,
-        fitMode: 'fit',
+        fitMode: 'fit' as const,
         panOffset: { x: 0, y: 0 },
       };
     });
@@ -266,7 +324,6 @@ function App() {
       await invoke('set_always_on_top', { onTop: newValue });
       setState((prev) => ({ ...prev, isAlwaysOnTop: newValue }));
 
-      // Save setting
       settingsRef.current.alwaysOnTopDefault = newValue;
       saveSettings(settingsRef.current);
     } catch {
@@ -277,7 +334,6 @@ function App() {
   // ---- Close ----
 
   const closeApp = useCallback(async () => {
-    // Save settings before closing
     try {
       await saveSettings(settingsRef.current);
     } catch {
@@ -326,7 +382,6 @@ function App() {
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return;
-      // Don't start drag if clicking on overlay buttons
       const target = e.target as HTMLElement;
       if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
         return;
@@ -339,7 +394,6 @@ function App() {
       panStartRef.current = { ...state.panOffset };
 
       if (mode === 'window-move') {
-        // Use Tauri's native window dragging
         const appWindow = getCurrentWindow();
         appWindow.startDragging();
         isDraggingRef.current = false;
@@ -359,7 +413,6 @@ function App() {
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
 
-      // Clamp pan offset
       const viewport = getViewportSize();
       const rendered = getRenderedSize(
         state.naturalSize.width,
@@ -371,7 +424,6 @@ function App() {
       let newX = panStartRef.current.x + dx;
       let newY = panStartRef.current.y + dy;
 
-      // If image doesn't overflow on an axis, center it
       if (rendered.width <= viewport.width) {
         newX = 0;
       } else {
@@ -399,39 +451,6 @@ function App() {
     dragModeRef.current = 'none';
   }, []);
 
-  // ---- Drag and drop ----
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const files = e.dataTransfer?.files;
-      if (!files || files.length === 0) return;
-
-      // Get the first file path
-      const file = files[0];
-      const filePath = (file as unknown as { path?: string }).path;
-
-      if (!filePath) return;
-
-      try {
-        const imageList = await scanFolder(filePath);
-        const index = imageList.indexOf(filePath);
-        openImage(filePath, imageList, Math.max(0, index));
-      } catch {
-        // Fall back to opening just the dropped file
-        openImage(filePath, [filePath], 0);
-      }
-    },
-    [scanFolder, openImage]
-  );
-
   // ---- Keyboard shortcuts ----
 
   useKeyboardShortcuts({
@@ -450,7 +469,6 @@ function App() {
 
   useEffect(() => {
     const handleResize = () => {
-      // Recalculate fit zoom if in fit mode
       setState((prev) => {
         if (prev.fitMode === 'fit') {
           const fitZoom = calculateFitZoom(
@@ -463,7 +481,6 @@ function App() {
         return prev;
       });
 
-      // Debounced save of window bounds
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async () => {
         try {
@@ -487,6 +504,34 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, [calculateFitZoom, saveSettings]);
 
+  // ---- [P3] Tauri native drag-drop event listener ----
+
+  useEffect(() => {
+    let unlistenFn: (() => void) | null = null;
+
+    const setup = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        unlistenFn = await appWindow.onDragDropEvent((event) => {
+          if (event.payload.type === 'drop') {
+            const paths = event.payload.paths;
+            if (paths && paths.length > 0) {
+              handleFileDrop(paths);
+            }
+          }
+        });
+      } catch {
+        // Fallback: Tauri drag-drop event not available in this environment
+      }
+    };
+
+    setup();
+
+    return () => {
+      if (unlistenFn) unlistenFn();
+    };
+  }, [handleFileDrop]);
+
   // ---- Initial load ----
 
   useEffect(() => {
@@ -496,10 +541,26 @@ function App() {
         const settings = await loadSettings();
         settingsRef.current = settings;
 
-        // Apply always-on-top default
+        // [P2] Apply always-on-top default
         if (settings.alwaysOnTopDefault) {
           await invoke('set_always_on_top', { onTop: true });
           setState((prev) => ({ ...prev, isAlwaysOnTop: true }));
+        }
+
+        // [P2] Apply saved window position/size (restored on startup)
+        if (settings.rememberWindowPosition && settings.lastWindowBounds) {
+          const bounds = settings.lastWindowBounds;
+          try {
+            await invoke('resize_window', {
+              width: bounds.width,
+              height: bounds.height,
+            });
+            const appWindow = getCurrentWindow();
+            const { LogicalPosition } = await import('@tauri-apps/api/dpi');
+            await appWindow.setPosition(new LogicalPosition(bounds.x, bounds.y));
+          } catch {
+            // Ignore — will use defaults
+          }
         }
       } catch {
         // Use defaults
@@ -508,7 +569,6 @@ function App() {
       // Check CLI args for initial image
       try {
         const args = await getCliArgs();
-        // args[0] is the executable path, args[1] may be the image path
         if (args.length > 1) {
           const imagePath = args[1];
           const imageList = await scanFolder(imagePath);
@@ -612,8 +672,6 @@ function App() {
         overlay.handleMouseLeave();
       }}
       onWheel={handleWheel}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
     >
       <div className="image-container">{renderImage()}</div>
 
