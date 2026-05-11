@@ -1,0 +1,347 @@
+/* ===== PlainView – Minimal Image Viewer Styles ===== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+/* ===== Reset & Base ===== */
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ===== App Container ===== */
+
+.app-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: #1a1a1e;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.3s ease;
+}
+
+/* Subtle glow border when pinned (always-on-top) */
+.app-container.pinned {
+  box-shadow: inset 0 0 0 1.5px rgba(100, 160, 255, 0.45);
+}
+
+/* ===== Image Container ===== */
+
+.image-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.viewer-image {
+  max-width: none;
+  max-height: none;
+  display: block;
+  transition: transform 0.08s ease-out;
+  image-rendering: auto;
+  will-change: transform;
+}
+
+/* ===== Overlay Container ===== */
+
+.overlay-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: 100;
+}
+
+.overlay-container.visible {
+  opacity: 1;
+}
+
+.overlay-container.visible .overlay-btn,
+.overlay-container.visible .overlay-bottom-center,
+.overlay-container.visible .overlay-top-right {
+  pointer-events: auto;
+}
+
+/* ===== Overlay Buttons – Shared ===== */
+
+.overlay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 8px;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.overlay-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  transform: scale(1.06);
+}
+
+.overlay-btn:active {
+  transform: scale(0.96);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ===== Top-Right: Close + Pin ===== */
+
+.overlay-top-right {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 102;
+}
+
+.overlay-top-right .overlay-btn {
+  width: 34px;
+  height: 34px;
+}
+
+.close-btn:hover {
+  background: rgba(220, 60, 60, 0.7) !important;
+  color: #fff;
+}
+
+.pin-btn.active {
+  background: rgba(100, 160, 255, 0.5);
+  color: #fff;
+}
+
+.pin-btn.active:hover {
+  background: rgba(100, 160, 255, 0.65);
+}
+
+/* ===== Navigation: Left / Right ===== */
+
+.nav-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 60px;
+  border-radius: 10px;
+  pointer-events: auto;
+  z-index: 101;
+}
+
+.nav-left {
+  left: 10px;
+}
+
+.nav-right {
+  right: 10px;
+}
+
+/* ===== Bottom Center: Zoom Controls ===== */
+
+.overlay-bottom-center {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 102;
+}
+
+.overlay-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+  padding: 5px 8px;
+}
+
+.zoom-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+}
+
+.zoom-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.zoom-label {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  font-weight: 500;
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.zoom-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 2px;
+}
+
+/* ===== Info Bar ===== */
+
+.overlay-info-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 4px 12px;
+  max-width: 400px;
+}
+
+.info-filename {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+.info-counter {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Loading View ===== */
+
+.loading-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2.5px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===== Error View ===== */
+
+.error-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.error-icon {
+  opacity: 0.5;
+}
+
+.error-message {
+  font-size: 14px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.error-close-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.error-close-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ===== Empty View ===== */
+
+.empty-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+}
+
+.empty-icon {
+  opacity: 0.3;
+}
+
+.empty-text {
+  font-size: 14px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* ===== Scrollbar Hide ===== */
+
+::-webkit-scrollbar {
+  display: none;
+}
