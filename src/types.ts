@@ -39,7 +39,6 @@ export interface ViewerState {
   panOffset: { x: number; y: number };
   naturalSize: { width: number; height: number };
   isAlwaysOnTop: boolean;
-  isOverlayVisible: boolean;
   isLoading: boolean;
   errorMessage: string | null;
   imageSrc: string | null;

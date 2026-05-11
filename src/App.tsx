@@ -27,7 +27,6 @@ function App() {
     panOffset: { x: 0, y: 0 },
     naturalSize: { width: 0, height: 0 },
     isAlwaysOnTop: false,
-    isOverlayVisible: false,
     isLoading: true,
     errorMessage: null,
     imageSrc: null,
@@ -44,7 +43,6 @@ function App() {
     lastWindowBounds: null,
   });
 
-  const containerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
@@ -454,6 +452,35 @@ function App() {
     dragModeRef.current = 'none';
   }, []);
 
+  const saveWindowBounds = useCallback(async () => {
+    if (!settingsRef.current.rememberWindowPosition) return;
+
+    try {
+      const appWindow = getCurrentWindow();
+      const pos = await appWindow.outerPosition();
+      const size = await appWindow.innerSize();
+      settingsRef.current.lastWindowBounds = {
+        x: pos.x,
+        y: pos.y,
+        width: size.width,
+        height: size.height,
+      };
+      await saveSettings(settingsRef.current);
+    } catch {
+      // Ignore
+    }
+  }, [saveSettings]);
+
+  const scheduleSaveWindowBounds = useCallback(() => {
+    if (!settingsRef.current.rememberWindowPosition) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      saveWindowBounds();
+    }, 500);
+  }, [saveWindowBounds]);
+
   // ---- Keyboard shortcuts ----
 
   useKeyboardShortcuts({
@@ -484,28 +511,51 @@ function App() {
         return prev;
       });
 
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(async () => {
-        try {
-          const appWindow = getCurrentWindow();
-          const pos = await appWindow.outerPosition();
-          const size = await appWindow.innerSize();
-          settingsRef.current.lastWindowBounds = {
-            x: pos.x,
-            y: pos.y,
-            width: size.width,
-            height: size.height,
-          };
-          await saveSettings(settingsRef.current);
-        } catch {
-          // Ignore
-        }
-      }, 500);
+      scheduleSaveWindowBounds();
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [calculateFitZoom, saveSettings]);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [calculateFitZoom, scheduleSaveWindowBounds]);
+
+  // ---- Window move handler ----
+  // Native Tauri move events catch borderless window dragging, which does not
+  // trigger the browser resize event.
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenFn: (() => void) | null = null;
+
+    const setup = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        const unlisten = await appWindow.onMoved(() => {
+          scheduleSaveWindowBounds();
+        });
+
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlistenFn = unlisten;
+        }
+      } catch {
+        // Tauri window move event not available in this environment
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      if (unlistenFn) unlistenFn();
+    };
+  }, [scheduleSaveWindowBounds]);
 
   // ---- Tauri native drag-drop event listener ----
   // Registered once on mount. Uses fileDropRef to avoid re-registration.
@@ -675,7 +725,6 @@ function App() {
 
   return (
     <div
-      ref={containerRef}
       className={`app-container ${state.isAlwaysOnTop ? 'pinned' : ''}`}
       style={{ cursor: getCursorStyle() }}
       onMouseDown={handleMouseDown}
