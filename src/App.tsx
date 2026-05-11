@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
+import { LogicalPosition } from '@tauri-apps/api/dpi';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import { useImageLoader } from './hooks/useImageLoader';
@@ -37,6 +38,7 @@ function App() {
     rememberWindowPosition: true,
     alwaysOnTopDefault: false,
     loopNavigation: true,
+    // Future settings — stored for forward compatibility but not yet applied in UI
     backgroundMode: 'dark',
     defaultFitMode: 'auto',
     lastWindowBounds: null,
@@ -49,7 +51,7 @@ function App() {
   const dragModeRef = useRef<DragMode>('none');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // [P2] Race condition prevention: monotonic request counter
+  // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
 
   const { loadImage, preloadImages, scanFolder, loadSettings, saveSettings, getCliArgs } =
@@ -110,7 +112,6 @@ function App() {
 
   const openImage = useCallback(
     async (filePath: string, imageList?: string[], index?: number) => {
-      // [P2] Increment request counter before starting
       const myRequestId = ++requestIdRef.current;
 
       setState((prev) => ({
@@ -124,7 +125,7 @@ function App() {
       try {
         const result = await loadImage(filePath);
 
-        // [P2] Stale request guard — abort if a newer request was issued
+        // Stale request guard
         if (requestIdRef.current !== myRequestId) return;
 
         const naturalW = result.naturalWidth;
@@ -148,7 +149,7 @@ function App() {
         try {
           await invoke('resize_window', { width: winW, height: winH });
 
-          // [P2] Apply saved window position if available, otherwise center
+          // Apply saved window position if available, otherwise center
           if (
             settingsRef.current.rememberWindowPosition &&
             settingsRef.current.lastWindowBounds
@@ -156,7 +157,7 @@ function App() {
             const bounds = settingsRef.current.lastWindowBounds;
             const appWindow = getCurrentWindow();
             await appWindow.setPosition(
-              new (await import('@tauri-apps/api/dpi')).LogicalPosition(bounds.x, bounds.y)
+              new LogicalPosition(bounds.x, bounds.y)
             );
           } else {
             const appWindow = getCurrentWindow();
@@ -166,10 +167,10 @@ function App() {
           // Window operations may fail, continue
         }
 
-        // [P2] Stale request guard after async window ops
+        // Stale request guard after async window ops
         if (requestIdRef.current !== myRequestId) return;
 
-        // [P2] FIX: Use the TARGET window size for fit zoom calculation,
+        // Use the TARGET window size for fit zoom calculation,
         // not window.innerWidth which may not have updated yet
         const fitZoom = calculateFitZoomForSize(naturalW, naturalH, 0, winW, winH);
 
@@ -199,7 +200,7 @@ function App() {
           preloadImages(toPreload);
         }
       } catch (err: unknown) {
-        // [P2] Stale request guard on error path too
+        // Stale request guard on error path too
         if (requestIdRef.current !== myRequestId) return;
 
         const message = err instanceof Error ? err.message : String(err);
@@ -214,12 +215,15 @@ function App() {
   );
 
   // ---- Tauri native drag-and-drop ----
+  // Use a ref so the listener callback always reads the latest scanFolder/openImage
+  // without causing the effect (and thus the Tauri listener) to re-register.
 
-  const handleFileDrop = useCallback(
-    async (paths: string[]) => {
-      if (paths.length === 0) return;
-      const filePath = paths[0];
+  const fileDropRef = useRef<(paths: string[]) => void>(() => {});
+  fileDropRef.current = (paths: string[]) => {
+    if (paths.length === 0) return;
+    const filePath = paths[0];
 
+    (async () => {
       try {
         const imageList = await scanFolder(filePath);
         const index = imageList.findIndex(
@@ -229,9 +233,8 @@ function App() {
       } catch {
         openImage(filePath, [filePath], 0);
       }
-    },
-    [scanFolder, openImage]
-  );
+    })();
+  };
 
   // ---- Navigation ----
 
@@ -504,33 +507,45 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, [calculateFitZoom, saveSettings]);
 
-  // ---- [P3] Tauri native drag-drop event listener ----
+  // ---- Tauri native drag-drop event listener ----
+  // Registered once on mount. Uses fileDropRef to avoid re-registration.
+  // cancelled flag guards against cleanup racing the async setup.
 
   useEffect(() => {
+    let cancelled = false;
     let unlistenFn: (() => void) | null = null;
 
     const setup = async () => {
       try {
         const appWindow = getCurrentWindow();
-        unlistenFn = await appWindow.onDragDropEvent((event) => {
+        const unlisten = await appWindow.onDragDropEvent((event) => {
           if (event.payload.type === 'drop') {
             const paths = event.payload.paths;
             if (paths && paths.length > 0) {
-              handleFileDrop(paths);
+              fileDropRef.current(paths);
             }
           }
         });
+
+        // If effect was cleaned up while we were awaiting, immediately unlisten
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlistenFn = unlisten;
+        }
       } catch {
-        // Fallback: Tauri drag-drop event not available in this environment
+        // Tauri drag-drop event not available in this environment
       }
     };
 
     setup();
 
     return () => {
+      cancelled = true;
       if (unlistenFn) unlistenFn();
     };
-  }, [handleFileDrop]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Initial load ----
 
@@ -541,13 +556,13 @@ function App() {
         const settings = await loadSettings();
         settingsRef.current = settings;
 
-        // [P2] Apply always-on-top default
+        // Apply always-on-top default
         if (settings.alwaysOnTopDefault) {
           await invoke('set_always_on_top', { onTop: true });
           setState((prev) => ({ ...prev, isAlwaysOnTop: true }));
         }
 
-        // [P2] Apply saved window position/size (restored on startup)
+        // Apply saved window position/size (restored on startup)
         if (settings.rememberWindowPosition && settings.lastWindowBounds) {
           const bounds = settings.lastWindowBounds;
           try {
@@ -556,7 +571,6 @@ function App() {
               height: bounds.height,
             });
             const appWindow = getCurrentWindow();
-            const { LogicalPosition } = await import('@tauri-apps/api/dpi');
             await appWindow.setPosition(new LogicalPosition(bounds.x, bounds.y));
           } catch {
             // Ignore — will use defaults

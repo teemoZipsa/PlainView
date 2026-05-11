@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface KeyboardShortcutsProps {
   onClose: () => void;
@@ -13,63 +13,67 @@ interface KeyboardShortcutsProps {
 }
 
 export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+  // Store callbacks in a ref so the listener never needs to be re-attached.
+  // The ref always points to the latest callbacks from the current render.
+  const propsRef = useRef(props);
+  propsRef.current = props;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       // Avoid shortcuts when typing in inputs
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
 
+      const p = propsRef.current;
+
       switch (e.key) {
         case 'Escape':
           e.preventDefault();
-          props.onClose();
+          p.onClose();
           break;
         case 'ArrowLeft':
         case 'Backspace':
           e.preventDefault();
-          props.onPrevImage();
+          p.onPrevImage();
           break;
         case 'ArrowRight':
         case ' ': // Space
           e.preventDefault();
-          props.onNextImage();
+          p.onNextImage();
           break;
         case '+':
         case '=':
           e.preventDefault();
-          props.onZoomIn();
+          p.onZoomIn();
           break;
         case '-':
           e.preventDefault();
-          props.onZoomOut();
+          p.onZoomOut();
           break;
         case '0':
           e.preventDefault();
-          props.onOriginalSize();
+          p.onOriginalSize();
           break;
         case 'f':
         case 'F':
           e.preventDefault();
-          props.onFitScreen();
+          p.onFitScreen();
           break;
         case 't':
         case 'T':
           e.preventDefault();
-          props.onToggleAlwaysOnTop();
+          p.onToggleAlwaysOnTop();
           break;
         case 'r':
         case 'R':
           e.preventDefault();
-          props.onRotate();
+          p.onRotate();
           break;
       }
-    },
-    [props]
-  );
+    };
 
-  useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  }, []); // Listener registered once; propsRef always has latest callbacks
 }
