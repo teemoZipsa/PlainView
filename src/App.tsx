@@ -32,6 +32,10 @@ function App() {
     imageSrc: null,
     fileName: '',
   });
+  const [viewportSize, setViewportSize] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
 
   const settingsRef = useRef<Settings>({
     rememberWindowPosition: true,
@@ -43,6 +47,7 @@ function App() {
     lastWindowBounds: null,
   });
 
+  const viewerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
@@ -60,11 +65,8 @@ function App() {
   // ---- Utility functions ----
 
   const getViewportSize = useCallback(() => {
-    return {
-      width: window.innerWidth,
-      height: window.innerHeight,
-    };
-  }, []);
+    return viewportSize;
+  }, [viewportSize]);
 
   const getRenderedSize = useCallback(
     (naturalW: number, naturalH: number, zoom: number, rotation: Rotation) => {
@@ -105,6 +107,18 @@ function App() {
     },
     [getViewportSize, calculateFitZoomForSize]
   );
+
+  const renderedSize = getRenderedSize(
+    state.naturalSize.width,
+    state.naturalSize.height,
+    state.zoom,
+    state.rotation
+  );
+  const isImageOverflowing =
+    !!state.imageSrc &&
+    viewportSize.width > 0 &&
+    viewportSize.height > 0 &&
+    (renderedSize.width > viewportSize.width || renderedSize.height > viewportSize.height);
 
   // ---- Image loading ----
 
@@ -452,6 +466,19 @@ function App() {
     dragModeRef.current = 'none';
   }, []);
 
+  const handleMoveMouseDown = useCallback(async (event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      await getCurrentWindow().startDragging();
+    } catch (error) {
+      console.warn('Failed to start window dragging:', error);
+    }
+  }, []);
+
   const saveWindowBounds = useCallback(async () => {
     if (!settingsRef.current.rememberWindowPosition) return;
 
@@ -495,16 +522,28 @@ function App() {
     onRotate: rotate,
   });
 
-  // ---- Window resize handler ----
+  // ---- Viewer resize handler ----
 
   useEffect(() => {
-    const handleResize = () => {
+    const el = viewerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+
+      setViewportSize((prev) => {
+        if (prev.width === width && prev.height === height) return prev;
+        return { width, height };
+      });
+
       setState((prev) => {
         if (prev.fitMode === 'fit') {
-          const fitZoom = calculateFitZoom(
+          const fitZoom = calculateFitZoomForSize(
             prev.naturalSize.width,
             prev.naturalSize.height,
-            prev.rotation
+            prev.rotation,
+            width,
+            height
           );
           return { ...prev, zoom: fitZoom, panOffset: { x: 0, y: 0 } };
         }
@@ -512,17 +551,17 @@ function App() {
       });
 
       scheduleSaveWindowBounds();
-    };
+    });
 
-    window.addEventListener('resize', handleResize);
+    observer.observe(el);
     return () => {
-      window.removeEventListener('resize', handleResize);
+      observer.disconnect();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
     };
-  }, [calculateFitZoom, scheduleSaveWindowBounds]);
+  }, [calculateFitZoomForSize, scheduleSaveWindowBounds]);
 
   // ---- Window move handler ----
   // Native Tauri move events catch borderless window dragging, which does not
@@ -736,7 +775,28 @@ function App() {
       }}
       onWheel={handleWheel}
     >
-      <div className="image-container">{renderImage()}</div>
+      <div ref={viewerRef} className="image-container">{renderImage()}</div>
+
+      {isImageOverflowing && (
+        <div className="window-move-zone">
+          <button
+            type="button"
+            className="window-move-handle"
+            title="창 이동"
+            aria-label="창 이동"
+            onMouseDown={handleMoveMouseDown}
+          >
+            <svg width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
+              <circle cx="6" cy="3" r="1.4" />
+              <circle cx="12" cy="3" r="1.4" />
+              <circle cx="18" cy="3" r="1.4" />
+              <circle cx="6" cy="9" r="1.4" />
+              <circle cx="12" cy="9" r="1.4" />
+              <circle cx="18" cy="9" r="1.4" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <OverlayControls
         isVisible={overlay.isVisible}

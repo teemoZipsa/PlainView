@@ -61,6 +61,54 @@ html, body, #root {
   will-change: transform;
 }
 
+/* ===== Window Move Handle ===== */
+
+.window-move-zone {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 96px;
+  height: 44px;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.window-move-handle {
+  width: 64px;
+  height: 28px;
+  border: none;
+  outline: none;
+  border-radius: 999px;
+  opacity: 0;
+  cursor: move;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.window-move-zone:hover .window-move-handle,
+.window-move-handle:focus-visible {
+  opacity: 1;
+}
+
+.window-move-handle:hover {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.window-move-handle svg {
+  fill: currentColor;
+}
+
 /* ===== Overlay Container ===== */
 
 .overlay-container {
