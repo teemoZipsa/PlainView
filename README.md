@@ -7,7 +7,10 @@
 
 ## 지원 포맷
 
-PNG, JPG, JPEG, WebP, BMP, GIF
+JPG, JPEG, PNG, WebP, GIF, BMP, TIF, TIFF, ICO, AVIF, JXL, PSD
+
+HEIC, HEIF, RAW, CR2, NEF, ARW 파일은 현재 버전에서 확장자 인식만 지원하며,
+열기 시 명확한 미지원 오류를 표시합니다.
 
 ## 키보드 단축키
 

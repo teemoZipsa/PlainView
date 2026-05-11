@@ -1,11 +1,21 @@
 use base64::{engine::general_purpose, Engine as _};
+use image::{DynamicImage, GenericImageView, ImageBuffer, ImageDecoder, ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Cursor;
+use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 /// Supported image extensions
-const SUPPORTED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "heic", "heif",
+    "jxl", "psd", "raw", "cr2", "nef", "arw",
+];
+
+const UNSUPPORTED_HEIC_EXTENSIONS: &[&str] = &["heic", "heif"];
+const UNSUPPORTED_RAW_EXTENSIONS: &[&str] = &["raw", "cr2", "nef", "arw"];
+const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Settings structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -52,6 +62,13 @@ pub struct ImageData {
     pub height: Option<u32>,
 }
 
+struct DecodedImage {
+    data: Vec<u8>,
+    mime_type: &'static str,
+    width: Option<u32>,
+    height: Option<u32>,
+}
+
 /// Get settings file path
 fn get_settings_path(app: &AppHandle) -> PathBuf {
     let app_dir = app
@@ -65,15 +82,34 @@ fn get_settings_path(app: &AppHandle) -> PathBuf {
 }
 
 /// Get mime type from extension
-fn get_mime_type(ext: &str) -> &str {
+fn get_mime_type(ext: &str) -> &'static str {
     match ext.to_lowercase().as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
         "bmp" => "image/bmp",
         "gif" => "image/gif",
+        "tif" | "tiff" => "image/tiff",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "jxl" => "image/jxl",
+        "psd" => "image/vnd.adobe.photoshop",
         _ => "application/octet-stream",
     }
+}
+
+fn unsupported_format_message(ext: &str) -> String {
+    if UNSUPPORTED_HEIC_EXTENSIONS.contains(&ext) {
+        return "HEIC/HEIF 형식은 현재 버전에서는 지원하지 않습니다.".to_string();
+    }
+
+    if UNSUPPORTED_RAW_EXTENSIONS.contains(&ext) {
+        return "RAW 카메라 형식은 현재 버전에서는 지원하지 않습니다.".to_string();
+    }
+
+    "지원하지 않는 파일 형식입니다.".to_string()
 }
 
 /// Check if a file has a supported image extension
@@ -82,6 +118,119 @@ fn is_supported_image(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+fn encode_png(image: DynamicImage) -> Result<DecodedImage, String> {
+    let (width, height) = image.dimensions();
+    let mut cursor = Cursor::new(Vec::new());
+    image
+        .write_to(&mut cursor, ImageFormat::Png)
+        .map_err(|e| format!("이미지를 PNG로 변환할 수 없습니다: {}", e))?;
+
+    Ok(DecodedImage {
+        data: cursor.into_inner(),
+        mime_type: "image/png",
+        width: Some(width),
+        height: Some(height),
+    })
+}
+
+fn catch_decode<F>(format_name: &str, decode: F) -> Result<DecodedImage, String>
+where
+    F: FnOnce() -> Result<DecodedImage, String> + UnwindSafe,
+{
+    match catch_unwind(decode) {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "{} 디코딩 중 내부 오류가 발생했습니다.",
+            format_name
+        )),
+    }
+}
+
+fn image_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_DECODED_BYTES);
+    limits
+}
+
+fn decode_with_image_crate(
+    data: &[u8],
+    format: ImageFormat,
+    format_name: &str,
+) -> Result<DecodedImage, String> {
+    catch_decode(format_name, || {
+        let mut reader = ImageReader::with_format(Cursor::new(data), format);
+        reader.limits(image_limits());
+
+        let image = reader
+            .decode()
+            .map_err(|e| format!("{} 파일을 디코딩할 수 없습니다: {}", format_name, e))?;
+
+        encode_png(image)
+    })
+}
+
+fn decode_jxl(path: &Path) -> Result<DecodedImage, String> {
+    catch_decode("JPEG XL", || {
+        let file = fs::File::open(path).map_err(|e| format!("JXL 파일을 열 수 없습니다: {}", e))?;
+        let mut decoder = jxl_oxide::integration::JxlDecoder::new(file)
+            .map_err(|e| format!("JXL 파일을 디코딩할 수 없습니다: {}", e))?;
+        decoder
+            .set_limits(image_limits())
+            .map_err(|e| format!("JXL 디코딩 제한을 설정할 수 없습니다: {}", e))?;
+
+        let image = DynamicImage::from_decoder(decoder)
+            .map_err(|e| format!("JXL 파일을 디코딩할 수 없습니다: {}", e))?;
+
+        encode_png(image)
+    })
+}
+
+fn decode_psd(data: &[u8]) -> Result<DecodedImage, String> {
+    catch_decode("PSD", || {
+        let psd = psd::Psd::from_bytes(data)
+            .map_err(|e| format!("PSD 파일을 디코딩할 수 없습니다: {}", e))?;
+        let width = psd.width();
+        let height = psd.height();
+        let decoded_bytes = u64::from(width)
+            .checked_mul(u64::from(height))
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| "PSD 이미지 크기가 너무 큽니다.".to_string())?;
+
+        if decoded_bytes > MAX_DECODED_BYTES {
+            return Err("PSD 이미지가 너무 커서 표시할 수 없습니다.".to_string());
+        }
+
+        let rgba = psd.rgba();
+        let image = ImageBuffer::from_raw(width, height, rgba)
+            .map(DynamicImage::ImageRgba8)
+            .ok_or_else(|| "PSD 픽셀 데이터를 이미지로 변환할 수 없습니다.".to_string())?;
+
+        encode_png(image)
+    })
+}
+
+fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, String> {
+    if UNSUPPORTED_HEIC_EXTENSIONS.contains(&ext) || UNSUPPORTED_RAW_EXTENSIONS.contains(&ext) {
+        return Err(unsupported_format_message(ext));
+    }
+
+    let data = fs::read(path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
+
+    match ext {
+        "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif" | "avif" => Ok(DecodedImage {
+            data,
+            mime_type: get_mime_type(ext),
+            width: None,
+            height: None,
+        }),
+        "tif" | "tiff" => decode_with_image_crate(&data, ImageFormat::Tiff, "TIFF"),
+        "ico" => decode_with_image_crate(&data, ImageFormat::Ico, "ICO"),
+        "jxl" => decode_jxl(path),
+        "psd" => decode_psd(&data),
+        _ => Err(unsupported_format_message(ext)),
+    }
 }
 
 /// Read an image file and return base64 encoded data
@@ -97,13 +246,11 @@ fn read_image(path: String) -> Result<ImageData, String> {
         return Err("지원하지 않는 파일 형식입니다.".to_string());
     }
 
-    let data = fs::read(&file_path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
-
     let ext = file_path
         .extension()
         .and_then(|e| e.to_str())
-        .unwrap_or("png");
-    let mime_type = get_mime_type(ext).to_string();
+        .map(|e| e.to_lowercase())
+        .unwrap_or_else(|| "png".to_string());
 
     let file_name = file_path
         .file_name()
@@ -111,16 +258,19 @@ fn read_image(path: String) -> Result<ImageData, String> {
         .unwrap_or("unknown")
         .to_string();
 
-    let file_size = data.len() as u64;
-    let base64_str = general_purpose::STANDARD.encode(&data);
+    let file_size = fs::metadata(&file_path)
+        .map_err(|e| format!("파일 정보를 읽을 수 없습니다: {}", e))?
+        .len();
+    let decoded = decode_image(&file_path, &ext)?;
+    let base64_str = general_purpose::STANDARD.encode(&decoded.data);
 
     Ok(ImageData {
         base64: base64_str,
-        mime_type,
+        mime_type: decoded.mime_type.to_string(),
         file_name,
         file_size,
-        width: None,
-        height: None,
+        width: decoded.width,
+        height: decoded.height,
     })
 }
 
@@ -135,8 +285,7 @@ fn scan_folder_images(folder_path: String) -> Result<Vec<String>, String> {
 
     let mut images: Vec<String> = Vec::new();
 
-    let entries =
-        fs::read_dir(&dir).map_err(|e| format!("폴더를 읽을 수 없습니다: {}", e))?;
+    let entries = fs::read_dir(&dir).map_err(|e| format!("폴더를 읽을 수 없습니다: {}", e))?;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -193,8 +342,8 @@ fn load_settings(app: AppHandle) -> Settings {
 #[tauri::command]
 fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     let path = get_settings_path(&app);
-    let json = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("설정 직렬화 오류: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(&settings).map_err(|e| format!("설정 직렬화 오류: {}", e))?;
     fs::write(&path, json).map_err(|e| format!("설정 저장 오류: {}", e))?;
     Ok(())
 }
