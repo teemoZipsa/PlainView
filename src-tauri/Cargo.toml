@@ -1,6 +1,6 @@
 [package]
 name = "plainview"
-version = "0.3.0"
+version = "0.4.0"
 description = "A minimal ad-free image viewer for Windows"
 authors = ["teemoZipsa"]
 edition = "2021"
@@ -21,3 +21,4 @@ base64 = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif", "tiff", "ico"] }
 jxl-oxide = { version = "0.12.5", features = ["image"] }
 psd = "0.3.5"
+tauri-plugin-dialog = "2"

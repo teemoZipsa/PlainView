@@ -2,12 +2,15 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
-import type { ViewerState, Rotation, Settings, DragMode } from './types';
+import type { ViewerState, Rotation, Settings, DragMode, FitMode, CustomOpenApp } from './types';
 import './App.css';
 
 const MIN_ZOOM = 0.1;
@@ -15,6 +18,34 @@ const MAX_ZOOM = 10;
 const ZOOM_STEP = 0.15;
 const SCREEN_FIT_RATIO = 0.92;
 const MIN_WINDOW_SIZE = 200;
+const CONTEXT_MENU_WIDTH = 240;
+const CONTEXT_MENU_MIN_HEIGHT = 190;
+const CONTEXT_SUBMENU_WIDTH = 240;
+const VIEWPORT_MARGIN = 8;
+
+interface FullscreenSnapshot {
+  currentFilePath: string | null;
+  zoom: number;
+  fitMode: FitMode;
+  panOffset: { x: number; y: number };
+}
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  submenuDirection: 'right' | 'left';
+}
+
+interface AppRegistrationDraft {
+  executablePath: string;
+  defaultName: string;
+  name: string;
+}
+
+const waitForNextFrame = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 
 function App() {
   const [state, setState] = useState<ViewerState>({
@@ -36,6 +67,11 @@ function App() {
     width: window.innerWidth,
     height: window.innerHeight,
   }));
+  const [customOpenApps, setCustomOpenApps] = useState<CustomOpenApp[]>([]);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [registrationDraft, setRegistrationDraft] = useState<AppRegistrationDraft | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const settingsRef = useRef<Settings>({
     rememberWindowPosition: true,
@@ -45,14 +81,19 @@ function App() {
     backgroundMode: 'dark',
     defaultFitMode: 'auto',
     lastWindowBounds: null,
+    customOpenApps: [],
   });
 
   const viewerRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
   const dragModeRef = useRef<DragMode>('none');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullscreenSnapshotRef = useRef<FullscreenSnapshot | null>(null);
+  const isFullscreenProcessingRef = useRef(false);
 
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
@@ -63,6 +104,44 @@ function App() {
   const overlay = useOverlayVisibility();
 
   // ---- Utility functions ----
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToastMessage(message);
+    toastTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 2200);
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const getExecutableDisplayName = useCallback((path: string) => {
+    const fileName = path.split(/[\\/]/).pop() || '앱';
+    return fileName.replace(/\.exe$/i, '') || '앱';
+  }, []);
+
+  const createCustomAppId = useCallback(() => {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID();
+    }
+    return `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  }, []);
+
+  const saveCustomOpenApps = useCallback(
+    async (nextApps: CustomOpenApp[]) => {
+      const nextSettings: Settings = {
+        ...settingsRef.current,
+        customOpenApps: nextApps,
+      };
+      await saveSettings(nextSettings);
+      settingsRef.current = nextSettings;
+      setCustomOpenApps(nextApps);
+    },
+    [saveSettings]
+  );
 
   const getViewportSize = useCallback(() => {
     return viewportSize;
@@ -358,6 +437,160 @@ function App() {
     await appWindow.close();
   }, [saveSettings]);
 
+  // ---- Context menu actions ----
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (!state.currentFilePath || state.isLoading || state.errorMessage) {
+        closeContextMenu();
+        return;
+      }
+
+      const maxX = Math.max(VIEWPORT_MARGIN, window.innerWidth - CONTEXT_MENU_WIDTH - VIEWPORT_MARGIN);
+      const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - CONTEXT_MENU_MIN_HEIGHT - VIEWPORT_MARGIN);
+      const x = Math.max(VIEWPORT_MARGIN, Math.min(event.clientX, maxX));
+      const y = Math.max(VIEWPORT_MARGIN, Math.min(event.clientY, maxY));
+      const submenuDirection =
+        x + CONTEXT_MENU_WIDTH + CONTEXT_SUBMENU_WIDTH + VIEWPORT_MARGIN > window.innerWidth
+          ? 'left'
+          : 'right';
+
+      setContextMenu({ x, y, submenuDirection });
+    },
+    [closeContextMenu, state.currentFilePath, state.errorMessage, state.isLoading]
+  );
+
+  const handleRevealInExplorer = useCallback(async () => {
+    closeContextMenu();
+    if (!state.currentFilePath) return;
+
+    try {
+      await revealItemInDir(state.currentFilePath);
+    } catch {
+      showToast('탐색기에서 파일을 표시할 수 없습니다.');
+    }
+  }, [closeContextMenu, showToast, state.currentFilePath]);
+
+  const handleOpenDefaultApp = useCallback(async () => {
+    closeContextMenu();
+    if (!state.currentFilePath) return;
+
+    try {
+      await openPath(state.currentFilePath);
+    } catch {
+      showToast('기본 앱으로 열 수 없습니다.');
+    }
+  }, [closeContextMenu, showToast, state.currentFilePath]);
+
+  const handleOpenCustomApp = useCallback(
+    async (app: CustomOpenApp) => {
+      closeContextMenu();
+      if (!state.currentFilePath) return;
+
+      try {
+        await invoke('open_with_custom_app', {
+          filePath: state.currentFilePath,
+          executablePath: app.executablePath,
+        });
+      } catch {
+        showToast('앱을 실행할 수 없습니다.');
+      }
+    },
+    [closeContextMenu, showToast, state.currentFilePath]
+  );
+
+  const handleRegisterCustomApp = useCallback(async () => {
+    closeContextMenu();
+
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: false,
+        title: '사용자 정의 앱 선택',
+        filters: [{ name: '실행 파일', extensions: ['exe'] }],
+      });
+
+      if (typeof selected !== 'string') return;
+
+      const defaultName = getExecutableDisplayName(selected);
+      setRegistrationDraft({
+        executablePath: selected,
+        defaultName,
+        name: defaultName,
+      });
+    } catch {
+      showToast('앱 선택 창을 열 수 없습니다.');
+    }
+  }, [closeContextMenu, getExecutableDisplayName, showToast]);
+
+  const handleSaveRegistration = useCallback(async () => {
+    if (!registrationDraft) return;
+
+    const name = registrationDraft.name.trim() || registrationDraft.defaultName;
+    const executablePath = registrationDraft.executablePath;
+    const existingIndex = customOpenApps.findIndex(
+      (app) => app.executablePath.toLowerCase() === executablePath.toLowerCase()
+    );
+    const nextApps =
+      existingIndex >= 0
+        ? customOpenApps.map((app, index) =>
+            index === existingIndex ? { ...app, name, executablePath } : app
+          )
+        : [
+            ...customOpenApps,
+            {
+              id: createCustomAppId(),
+              name,
+              executablePath,
+            },
+          ];
+
+    try {
+      await saveCustomOpenApps(nextApps);
+      setRegistrationDraft(null);
+      showToast(existingIndex >= 0 ? '등록 앱을 갱신했습니다.' : '앱을 등록했습니다.');
+    } catch {
+      showToast('앱 등록을 저장할 수 없습니다.');
+    }
+  }, [createCustomAppId, customOpenApps, registrationDraft, saveCustomOpenApps, showToast]);
+
+  const handleRequestRemoveCustomApp = useCallback(
+    (app: CustomOpenApp) => {
+      closeContextMenu();
+      setRemoveTarget(app);
+    },
+    [closeContextMenu]
+  );
+
+  const handleConfirmRemoveCustomApp = useCallback(async () => {
+    if (!removeTarget) return;
+
+    const nextApps = customOpenApps.filter((app) => app.id !== removeTarget.id);
+
+    try {
+      await saveCustomOpenApps(nextApps);
+      setRemoveTarget(null);
+      showToast('등록 앱을 제거했습니다.');
+    } catch {
+      showToast('등록 앱 제거를 저장할 수 없습니다.');
+    }
+  }, [customOpenApps, removeTarget, saveCustomOpenApps, showToast]);
+
+  const handlePrintFile = useCallback(async () => {
+    closeContextMenu();
+    if (!state.currentFilePath) return;
+
+    try {
+      await invoke('print_file', { path: state.currentFilePath });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast(message || '인쇄를 시작할 수 없습니다.');
+    }
+  }, [closeContextMenu, showToast, state.currentFilePath]);
+
   // ---- Mouse wheel zoom ----
 
   const handleWheel = useCallback(
@@ -396,9 +629,15 @@ function App() {
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      if (contextMenu) return;
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
       if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
+        return;
+      }
+      if (target.closest('.viewer-image') && e.detail > 1) {
+        e.preventDefault();
+        e.stopPropagation();
         return;
       }
 
@@ -416,7 +655,7 @@ function App() {
 
       e.preventDefault();
     },
-    [getDragMode, state.panOffset]
+    [contextMenu, getDragMode, state.panOffset]
   );
 
   const handleMouseMove = useCallback(
@@ -479,6 +718,82 @@ function App() {
     }
   }, []);
 
+  const handleImageDoubleClick = useCallback(
+    async (event: React.MouseEvent<HTMLImageElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (isFullscreenProcessingRef.current || !state.imageSrc) return;
+      isFullscreenProcessingRef.current = true;
+
+      try {
+        const appWindow = getCurrentWindow();
+        const isFullscreen = await appWindow.isFullscreen();
+
+        if (!isFullscreen) {
+          fullscreenSnapshotRef.current = {
+            currentFilePath: state.currentFilePath,
+            zoom: state.zoom,
+            fitMode: state.fitMode,
+            panOffset: { ...state.panOffset },
+          };
+
+          await appWindow.setFullscreen(true);
+          await waitForNextFrame();
+          await waitForNextFrame();
+
+          const rect = viewerRef.current?.getBoundingClientRect();
+          const width = rect && rect.width > 0 ? rect.width : window.innerWidth;
+          const height = rect && rect.height > 0 ? rect.height : window.innerHeight;
+          const fitZoom = calculateFitZoomForSize(
+            state.naturalSize.width,
+            state.naturalSize.height,
+            state.rotation,
+            width,
+            height
+          );
+
+          setState((prev) => ({
+            ...prev,
+            zoom: fitZoom,
+            fitMode: 'fit',
+            panOffset: { x: 0, y: 0 },
+          }));
+          return;
+        }
+
+        await appWindow.setFullscreen(false);
+
+        const snapshot = fullscreenSnapshotRef.current;
+        fullscreenSnapshotRef.current = null;
+
+        if (snapshot && snapshot.currentFilePath === state.currentFilePath) {
+          setState((prev) => ({
+            ...prev,
+            zoom: snapshot.zoom,
+            fitMode: snapshot.fitMode,
+            panOffset: snapshot.panOffset,
+          }));
+        }
+      } catch {
+        // Ignore fullscreen failures; the viewer remains usable.
+      } finally {
+        isFullscreenProcessingRef.current = false;
+      }
+    },
+    [
+      calculateFitZoomForSize,
+      state.currentFilePath,
+      state.fitMode,
+      state.imageSrc,
+      state.naturalSize.height,
+      state.naturalSize.width,
+      state.panOffset,
+      state.rotation,
+      state.zoom,
+    ]
+  );
+
   const saveWindowBounds = useCallback(async () => {
     if (!settingsRef.current.rememberWindowPosition) return;
 
@@ -522,6 +837,34 @@ function App() {
     onRotate: rotate,
   });
 
+  // ---- Context menu dismissal ----
+
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (contextMenuRef.current?.contains(target)) return;
+      closeContextMenu();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeContextMenu();
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', closeContextMenu);
+    window.addEventListener('resize', closeContextMenu);
+
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('blur', closeContextMenu);
+      window.removeEventListener('resize', closeContextMenu);
+    };
+  }, [closeContextMenu, contextMenu]);
+
   // ---- Viewer resize handler ----
 
   useEffect(() => {
@@ -550,6 +893,7 @@ function App() {
         return prev;
       });
 
+      closeContextMenu();
       scheduleSaveWindowBounds();
     });
 
@@ -561,7 +905,7 @@ function App() {
         saveTimerRef.current = null;
       }
     };
-  }, [calculateFitZoomForSize, scheduleSaveWindowBounds]);
+  }, [calculateFitZoomForSize, closeContextMenu, scheduleSaveWindowBounds]);
 
   // ---- Window move handler ----
   // Native Tauri move events catch borderless window dragging, which does not
@@ -575,6 +919,7 @@ function App() {
       try {
         const appWindow = getCurrentWindow();
         const unlisten = await appWindow.onMoved(() => {
+          closeContextMenu();
           scheduleSaveWindowBounds();
         });
 
@@ -594,7 +939,7 @@ function App() {
       cancelled = true;
       if (unlistenFn) unlistenFn();
     };
-  }, [scheduleSaveWindowBounds]);
+  }, [closeContextMenu, scheduleSaveWindowBounds]);
 
   // ---- Tauri native drag-drop event listener ----
   // Registered once on mount. Uses fileDropRef to avoid re-registration.
@@ -644,6 +989,7 @@ function App() {
       try {
         const settings = await loadSettings();
         settingsRef.current = settings;
+        setCustomOpenApps(settings.customOpenApps ?? []);
 
         // Apply always-on-top default
         if (settings.alwaysOnTopDefault) {
@@ -757,6 +1103,7 @@ function App() {
           transform,
           transformOrigin: 'center center',
         }}
+        onDoubleClick={handleImageDoubleClick}
         draggable={false}
       />
     );
@@ -774,6 +1121,7 @@ function App() {
         overlay.handleMouseLeave();
       }}
       onWheel={handleWheel}
+      onContextMenu={handleContextMenu}
     >
       <div ref={viewerRef} className="image-container">{renderImage()}</div>
 
@@ -817,6 +1165,81 @@ function App() {
         onOverlayEnter={overlay.handleOverlayEnter}
         onOverlayLeave={overlay.handleOverlayLeave}
       />
+
+      {contextMenu && (
+        <ContextMenu
+          menuRef={contextMenuRef}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          submenuDirection={contextMenu.submenuDirection}
+          customApps={customOpenApps}
+          onReveal={handleRevealInExplorer}
+          onOpenDefault={handleOpenDefaultApp}
+          onOpenCustom={handleOpenCustomApp}
+          onRegisterApp={handleRegisterCustomApp}
+          onRequestRemoveApp={handleRequestRemoveCustomApp}
+          onPrint={handlePrintFile}
+        />
+      )}
+
+      {registrationDraft && (
+        <div className="modal-backdrop" onMouseDown={() => setRegistrationDraft(null)}>
+          <div className="app-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <h2 className="app-modal-title">사용자 정의 앱 등록</h2>
+            <p className="app-modal-path" title={registrationDraft.executablePath}>
+              {registrationDraft.executablePath}
+            </p>
+            <label className="app-modal-label" htmlFor="custom-app-name">
+              표시 이름
+            </label>
+            <input
+              id="custom-app-name"
+              className="app-modal-input"
+              value={registrationDraft.name}
+              placeholder={registrationDraft.defaultName}
+              autoFocus
+              onChange={(event) =>
+                setRegistrationDraft((prev) =>
+                  prev ? { ...prev, name: event.target.value } : prev
+                )
+              }
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') handleSaveRegistration();
+                if (event.key === 'Escape') setRegistrationDraft(null);
+              }}
+            />
+            <div className="app-modal-actions">
+              <button type="button" className="app-modal-button secondary" onClick={() => setRegistrationDraft(null)}>
+                취소
+              </button>
+              <button type="button" className="app-modal-button primary" onClick={handleSaveRegistration}>
+                저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {removeTarget && (
+        <div className="modal-backdrop" onMouseDown={() => setRemoveTarget(null)}>
+          <div className="app-modal compact" onMouseDown={(event) => event.stopPropagation()}>
+            <h2 className="app-modal-title">등록 앱 제거</h2>
+            <p className="app-modal-text">
+              {removeTarget.name} 항목을 제거할까요?
+            </p>
+            <div className="app-modal-actions">
+              <button type="button" className="app-modal-button secondary" onClick={() => setRemoveTarget(null)}>
+                취소
+              </button>
+              <button type="button" className="app-modal-button danger" onClick={handleConfirmRemoveCustomApp}>
+                제거
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toastMessage && <div className="toast-message">{toastMessage}</div>}
     </div>
   );
 }

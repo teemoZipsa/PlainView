@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Cursor;
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 /// Supported image extensions
@@ -27,6 +28,8 @@ pub struct Settings {
     pub background_mode: String,
     pub default_fit_mode: String,
     pub last_window_bounds: Option<WindowBounds>,
+    #[serde(default)]
+    pub custom_open_apps: Vec<CustomOpenApp>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -35,6 +38,14 @@ pub struct WindowBounds {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomOpenApp {
+    pub id: String,
+    pub name: String,
+    pub executable_path: String,
 }
 
 impl Default for Settings {
@@ -46,6 +57,7 @@ impl Default for Settings {
             background_mode: "dark".to_string(),
             default_fit_mode: "auto".to_string(),
             last_window_bounds: None,
+            custom_open_apps: Vec::new(),
         }
     }
 }
@@ -365,6 +377,69 @@ fn resize_window(window: WebviewWindow, width: f64, height: f64) -> Result<(), S
         .map_err(|e| format!("창 크기 변경 오류: {}", e))
 }
 
+#[tauri::command]
+fn open_with_custom_app(file_path: String, executable_path: String) -> Result<(), String> {
+    let file = PathBuf::from(&file_path);
+    if !file.is_file() {
+        return Err("이미지 파일을 찾을 수 없습니다.".to_string());
+    }
+
+    let executable = PathBuf::from(&executable_path);
+    if !executable.is_file() {
+        return Err("등록된 앱을 찾을 수 없습니다.".to_string());
+    }
+
+    Command::new(&executable)
+        .arg(&file)
+        .spawn()
+        .map_err(|e| format!("앱을 실행할 수 없습니다: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn print_file(path: String) -> Result<(), String> {
+    let file = PathBuf::from(&path);
+    if !file.is_file() {
+        return Err("인쇄할 파일을 찾을 수 없습니다.".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "$ErrorActionPreference='Stop'; Start-Process -FilePath $args[0] -Verb Print",
+            ])
+            .arg(&file)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("인쇄를 시작할 수 없습니다: {}", e))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if stderr.is_empty() {
+                "인쇄를 시작할 수 없습니다.".to_string()
+            } else {
+                format!("인쇄를 시작할 수 없습니다: {}", stderr)
+            })
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("이 플랫폼에서는 인쇄를 지원하지 않습니다.".to_string())
+    }
+}
+
 /// Get CLI arguments (for file association)
 #[tauri::command]
 fn get_cli_args() -> Vec<String> {
@@ -375,6 +450,7 @@ fn get_cli_args() -> Vec<String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_image,
             scan_folder_images,
@@ -383,6 +459,8 @@ pub fn run() {
             save_settings,
             set_always_on_top,
             resize_window,
+            open_with_custom_app,
+            print_file,
             get_cli_args,
         ])
         .run(tauri::generate_context!())

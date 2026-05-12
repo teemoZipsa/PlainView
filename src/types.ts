@@ -16,6 +16,7 @@ export interface Settings {
   /** @future Stored for forward compatibility — not yet applied in UI. */
   defaultFitMode: string;
   lastWindowBounds: WindowBounds | null;
+  customOpenApps: CustomOpenApp[];
 }
 
 export interface WindowBounds {
@@ -23,6 +24,12 @@ export interface WindowBounds {
   y: number;
   width: number;
   height: number;
+}
+
+export interface CustomOpenApp {
+  id: string;
+  name: string;
+  executablePath: string;
 }
 
 export type FitMode = 'auto' | 'fit' | 'original';

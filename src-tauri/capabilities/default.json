@@ -9,6 +9,8 @@
     "core:window:allow-set-always-on-top",
     "core:window:allow-set-size",
     "core:window:allow-set-position",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
     "core:window:allow-set-focus",
     "core:window:allow-center",
     "core:window:allow-start-dragging",
@@ -23,6 +25,8 @@
     "core:window:allow-is-visible",
     "core:webview:allow-set-webview-size",
     "core:webview:allow-set-webview-position",
-    "opener:default"
+    "opener:default",
+    "opener:allow-open-path",
+    "dialog:allow-open"
   ]
 }
