@@ -9,6 +9,7 @@ interface ContextMenuProps {
   y: number;
   submenuDirection: SubmenuDirection;
   customApps: CustomOpenApp[];
+  onCopyImage: () => void;
   onReveal: () => void;
   onOpenDefault: () => void;
   onOpenCustom: (app: CustomOpenApp) => void;
@@ -23,6 +24,7 @@ export default function ContextMenu({
   y,
   submenuDirection,
   customApps,
+  onCopyImage,
   onReveal,
   onOpenDefault,
   onOpenCustom,
@@ -38,6 +40,10 @@ export default function ContextMenu({
       role="menu"
       onContextMenu={(event) => event.preventDefault()}
     >
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyImage}>
+        이미지 복사
+      </button>
+      <div className="context-menu-divider" />
       <button className="context-menu-item" type="button" role="menuitem" onClick={onReveal}>
         탐색기에서 보기
       </button>

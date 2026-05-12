@@ -1,5 +1,8 @@
 use base64::{engine::general_purpose, Engine as _};
-use image::{DynamicImage, GenericImageView, ImageBuffer, ImageDecoder, ImageFormat, ImageReader};
+use image::{
+    codecs::dds::DdsDecoder, DynamicImage, GenericImageView, ImageBuffer, ImageDecoder,
+    ImageFormat, ImageReader,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Cursor;
@@ -11,7 +14,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 /// Supported image extensions
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "heic", "heif",
-    "jxl", "psd", "raw", "cr2", "nef", "arw",
+    "jxl", "psd", "tga", "dds", "pbm", "pgm", "pnm", "ppm", "pam", "raw", "cr2", "nef", "arw",
 ];
 
 const UNSUPPORTED_HEIC_EXTENSIONS: &[&str] = &["heic", "heif"];
@@ -108,6 +111,9 @@ fn get_mime_type(ext: &str) -> &'static str {
         "heif" => "image/heif",
         "jxl" => "image/jxl",
         "psd" => "image/vnd.adobe.photoshop",
+        "tga" => "image/x-targa",
+        "dds" => "image/vnd-ms.dds",
+        "pbm" | "pgm" | "pnm" | "ppm" | "pam" => "image/x-portable-anymap",
         _ => "application/octet-stream",
     }
 }
@@ -223,6 +229,22 @@ fn decode_psd(data: &[u8]) -> Result<DecodedImage, String> {
     })
 }
 
+fn decode_dds(data: &[u8]) -> Result<DecodedImage, String> {
+    catch_decode("DDS", || {
+        let decoder = DdsDecoder::new(Cursor::new(data))
+            .map_err(|e| format!("DDS 파일을 디코딩할 수 없습니다: {}", e))?;
+
+        if decoder.total_bytes() > MAX_DECODED_BYTES {
+            return Err("DDS 이미지가 너무 커서 표시할 수 없습니다.".to_string());
+        }
+
+        let image = DynamicImage::from_decoder(decoder)
+            .map_err(|e| format!("DDS 파일을 디코딩할 수 없습니다: {}", e))?;
+
+        encode_png(image)
+    })
+}
+
 fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, String> {
     if UNSUPPORTED_HEIC_EXTENSIONS.contains(&ext) || UNSUPPORTED_RAW_EXTENSIONS.contains(&ext) {
         return Err(unsupported_format_message(ext));
@@ -239,6 +261,11 @@ fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, String> {
         }),
         "tif" | "tiff" => decode_with_image_crate(&data, ImageFormat::Tiff, "TIFF"),
         "ico" => decode_with_image_crate(&data, ImageFormat::Ico, "ICO"),
+        "tga" => decode_with_image_crate(&data, ImageFormat::Tga, "TGA"),
+        "pbm" | "pgm" | "pnm" | "ppm" | "pam" => {
+            decode_with_image_crate(&data, ImageFormat::Pnm, "PNM")
+        }
+        "dds" => decode_dds(&data),
         "jxl" => decode_jxl(path),
         "psd" => decode_psd(&data),
         _ => Err(unsupported_format_message(ext)),
@@ -451,6 +478,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             read_image,
             scan_folder_images,

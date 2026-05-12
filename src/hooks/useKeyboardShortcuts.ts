@@ -10,6 +10,27 @@ interface KeyboardShortcutsProps {
   onFitScreen: () => void;
   onToggleAlwaysOnTop: () => void;
   onRotate: () => void;
+  canCopyImage: () => boolean;
+  onCopyImage: () => void;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target.isContentEditable
+  );
+}
+
+function isCopyShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 'c' &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  );
 }
 
 export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
@@ -21,11 +42,19 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Avoid shortcuts when typing in inputs
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      if (isEditableTarget(e.target)) {
         return;
       }
 
       const p = propsRef.current;
+
+      if (isCopyShortcut(e)) {
+        if (p.canCopyImage()) {
+          e.preventDefault();
+          p.onCopyImage();
+        }
+        return;
+      }
 
       switch (e.key) {
         case 'Escape':

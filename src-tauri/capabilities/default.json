@@ -27,6 +27,7 @@
     "core:webview:allow-set-webview-position",
     "opener:default",
     "opener:allow-open-path",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "clipboard-manager:allow-write-image"
   ]
 }

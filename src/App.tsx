@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
+import { Image as TauriImage } from '@tauri-apps/api/image';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
@@ -85,6 +87,7 @@ function App() {
   });
 
   const viewerRef = useRef<HTMLDivElement>(null);
+  const viewerImageRef = useRef<HTMLImageElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -94,6 +97,7 @@ function App() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenSnapshotRef = useRef<FullscreenSnapshot | null>(null);
   const isFullscreenProcessingRef = useRef(false);
+  const isCopyingRef = useRef(false);
 
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
@@ -142,6 +146,78 @@ function App() {
     },
     [saveSettings]
   );
+
+  const canCopyImage = useCallback(() => {
+    return !!state.imageSrc && !state.isLoading && !state.errorMessage;
+  }, [state.errorMessage, state.imageSrc, state.isLoading]);
+
+  const loadImageElement = useCallback((src: string) => {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new window.Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
+      image.src = src;
+    });
+  }, []);
+
+  const copyImageElementToClipboard = useCallback(async (imageElement: HTMLImageElement) => {
+    const width = imageElement.naturalWidth;
+    const height = imageElement.naturalHeight;
+
+    if (!width || !height) {
+      throw new Error('이미지 크기를 확인할 수 없습니다.');
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('2D canvas context is not available.');
+    }
+
+    context.drawImage(imageElement, 0, 0, width, height);
+
+    const imageData = context.getImageData(0, 0, width, height);
+    const rgba = new Uint8Array(imageData.data);
+    const tauriImage = await TauriImage.new(rgba, width, height);
+
+    try {
+      await writeImage(tauriImage);
+    } finally {
+      await tauriImage.close().catch(() => {});
+    }
+  }, []);
+
+  const handleCopyImage = useCallback(async () => {
+    if (isCopyingRef.current || !canCopyImage() || !state.imageSrc) return;
+
+    const srcAtStart = state.imageSrc;
+    const imageElementAtStart = viewerImageRef.current;
+    isCopyingRef.current = true;
+
+    try {
+      let imageElement = imageElementAtStart;
+
+      if (
+        !imageElement ||
+        !imageElement.complete ||
+        imageElement.naturalWidth === 0 ||
+        imageElement.src !== srcAtStart
+      ) {
+        imageElement = await loadImageElement(srcAtStart);
+      }
+
+      await copyImageElementToClipboard(imageElement);
+      showToast('이미지를 클립보드에 복사했습니다.');
+    } catch (error) {
+      console.warn('Failed to copy image:', error);
+      showToast('이미지를 복사할 수 없습니다.');
+    } finally {
+      isCopyingRef.current = false;
+    }
+  }, [canCopyImage, copyImageElementToClipboard, loadImageElement, showToast, state.imageSrc]);
 
   const getViewportSize = useCallback(() => {
     return viewportSize;
@@ -473,6 +549,11 @@ function App() {
       showToast('탐색기에서 파일을 표시할 수 없습니다.');
     }
   }, [closeContextMenu, showToast, state.currentFilePath]);
+
+  const handleCopyImageFromMenu = useCallback(() => {
+    closeContextMenu();
+    void handleCopyImage();
+  }, [closeContextMenu, handleCopyImage]);
 
   const handleOpenDefaultApp = useCallback(async () => {
     closeContextMenu();
@@ -835,6 +916,10 @@ function App() {
     onFitScreen: fitToScreen,
     onToggleAlwaysOnTop: toggleAlwaysOnTop,
     onRotate: rotate,
+    canCopyImage,
+    onCopyImage: () => {
+      void handleCopyImage();
+    },
   });
 
   // ---- Context menu dismissal ----
@@ -1096,6 +1181,7 @@ function App() {
 
     return (
       <img
+        ref={viewerImageRef}
         src={state.imageSrc}
         alt={state.fileName}
         className="viewer-image"
@@ -1173,6 +1259,7 @@ function App() {
           y={contextMenu.y}
           submenuDirection={contextMenu.submenuDirection}
           customApps={customOpenApps}
+          onCopyImage={handleCopyImageFromMenu}
           onReveal={handleRevealInExplorer}
           onOpenDefault={handleOpenDefaultApp}
           onOpenCustom={handleOpenCustomApp}

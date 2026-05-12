@@ -1,6 +1,6 @@
 [package]
 name = "plainview"
-version = "0.4.0"
+version = "0.5.0"
 description = "A minimal ad-free image viewer for Windows"
 authors = ["teemoZipsa"]
 edition = "2021"
@@ -13,12 +13,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif", "tiff", "ico"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif", "tiff", "ico", "tga", "pnm", "dds"] }
 jxl-oxide = { version = "0.12.5", features = ["image"] }
 psd = "0.3.5"
 tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2.3.2"

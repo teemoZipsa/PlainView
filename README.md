@@ -7,7 +7,11 @@
 
 ## 지원 포맷
 
-JPG, JPEG, PNG, WebP, GIF, BMP, TIF, TIFF, ICO, AVIF, JXL, PSD
+JPG, JPEG, PNG, WebP, GIF, BMP, TIF, TIFF, ICO, AVIF, JXL, PSD, TGA, PBM, PGM, PNM, PPM, PAM, DDS
+
+PAM은 표준 tuple type 중심으로 지원합니다.
+DDS는 DXT1/BC1, DXT3/BC2, DXT5/BC3 계열 중심으로 지원하며,
+BC4, BC5, BC6H, BC7, 기타 DXGI variant, 일반 uncompressed DDS는 지원하지 않습니다.
 
 HEIC, HEIF, RAW, CR2, NEF, ARW 파일은 현재 버전에서 확장자 인식만 지원하며,
 열기 시 명확한 미지원 오류를 표시합니다.
@@ -25,6 +29,7 @@ HEIC, HEIF, RAW, CR2, NEF, ARW 파일은 현재 버전에서 확장자 인식만
 | `F` | 화면 맞춤 |
 | `T` | 항상 위 고정 |
 | `R` | 시계 방향 90° 회전 |
+| `Ctrl+C` | 이미지 복사 |
 
 ## 주요 기능
 
@@ -36,6 +41,7 @@ HEIC, HEIF, RAW, CR2, NEF, ARW 파일은 현재 버전에서 확장자 인식만
 - **전체화면** — 이미지를 더블클릭하면 화면 맞춤 전체화면으로 전환, 다시 더블클릭하면 이전 배율로 복귀
 - **창 이동** — 기본 상태는 이미지 영역 드래그, 확대 상태는 상단 핸들 또는 Alt+드래그로 창 이동
 - **우클릭 메뉴** — 탐색기에서 보기, 기본 앱으로 열기, 사용자 정의 앱 등록/열기, 인쇄
+- **이미지 복사** — `Ctrl+C` 또는 우클릭 메뉴로 현재 이미지를 클립보드에 복사
 - **항상 위 고정** — 다른 창 위에 이미지를 띄워놓기
 - **회전** — 보기 전용 90도 회전
 - **드래그 앤 드롭** — 이미지 파일을 끌어다 놓으면 열기
