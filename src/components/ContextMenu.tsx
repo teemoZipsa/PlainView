@@ -12,6 +12,7 @@ interface ContextMenuProps {
   onCopyImage: () => void;
   onReveal: () => void;
   onOpenDefault: () => void;
+  onMoveFile: () => void;
   onOpenCustom: (app: CustomOpenApp) => void;
   onRegisterApp: () => void;
   onRequestRemoveApp: (app: CustomOpenApp) => void;
@@ -27,6 +28,7 @@ export default function ContextMenu({
   onCopyImage,
   onReveal,
   onOpenDefault,
+  onMoveFile,
   onOpenCustom,
   onRegisterApp,
   onRequestRemoveApp,
@@ -49,6 +51,9 @@ export default function ContextMenu({
       </button>
       <button className="context-menu-item" type="button" role="menuitem" onClick={onOpenDefault}>
         기본 앱으로 열기
+      </button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onMoveFile}>
+        다른 폴더로 이동...
       </button>
 
       <div className="context-menu-item context-menu-parent" role="menuitem" tabIndex={0}>

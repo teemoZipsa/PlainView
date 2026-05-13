@@ -6,10 +6,18 @@ import type { ImageData, Settings } from '../types';
 
 const MAX_CACHE_SIZE = 5;
 
-/** Ordered map: oldest → newest. When full, evict the oldest entry. */
-const preloadCache = new Map<string, string>();
+interface CachedImage {
+  src: string;
+  fileName: string;
+  filePath: string;
+  fileSize: number;
+  originalExtension: string | null;
+}
 
-function cacheSet(key: string, value: string) {
+/** Ordered map: oldest -> newest. When full, evict the oldest entry. */
+const preloadCache = new Map<string, CachedImage>();
+
+function cacheSet(key: string, value: CachedImage) {
   // If the key already exists, delete and re-insert to move it to the end (most recent)
   if (preloadCache.has(key)) {
     preloadCache.delete(key);
@@ -26,7 +34,7 @@ function cacheSet(key: string, value: string) {
   preloadCache.set(key, value);
 }
 
-function cacheGet(key: string): string | undefined {
+function cacheGet(key: string): CachedImage | undefined {
   const value = preloadCache.get(key);
   if (value !== undefined) {
     // Move to end (most recently used)
@@ -44,6 +52,9 @@ export function useImageLoader() {
   const loadImage = useCallback(async (filePath: string): Promise<{
     src: string;
     fileName: string;
+    filePath: string;
+    fileSize: number;
+    originalExtension: string | null;
     naturalWidth: number;
     naturalHeight: number;
   }> => {
@@ -53,13 +64,16 @@ export function useImageLoader() {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve({
-          src: cached,
-          fileName: filePath.split(/[\\/]/).pop() || 'unknown',
+          src: cached.src,
+          fileName: cached.fileName,
+          filePath: cached.filePath,
+          fileSize: cached.fileSize,
+          originalExtension: cached.originalExtension,
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
         });
         img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
-        img.src = cached;
+        img.src = cached.src;
       });
     }
 
@@ -70,7 +84,13 @@ export function useImageLoader() {
       const src = `data:${data.mimeType};base64,${data.base64}`;
 
       // LRU cache set (auto-evicts oldest if full)
-      cacheSet(filePath, src);
+      cacheSet(filePath, {
+        src,
+        fileName: data.fileName,
+        filePath: data.filePath,
+        fileSize: data.fileSize,
+        originalExtension: data.originalExtension,
+      });
 
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -79,6 +99,9 @@ export function useImageLoader() {
           resolve({
             src,
             fileName: data.fileName,
+            filePath: data.filePath,
+            fileSize: data.fileSize,
+            originalExtension: data.originalExtension,
             naturalWidth: img.naturalWidth,
             naturalHeight: img.naturalHeight,
           });
@@ -100,7 +123,13 @@ export function useImageLoader() {
       if (!preloadCache.has(p)) {
         try {
           const data = await invoke<ImageData>('read_image', { path: p });
-          cacheSet(p, `data:${data.mimeType};base64,${data.base64}`);
+          cacheSet(p, {
+            src: `data:${data.mimeType};base64,${data.base64}`,
+            fileName: data.fileName,
+            filePath: data.filePath,
+            fileSize: data.fileSize,
+            originalExtension: data.originalExtension,
+          });
         } catch {
           // Silently skip failed preloads
         }

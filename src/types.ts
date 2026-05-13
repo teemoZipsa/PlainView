@@ -2,9 +2,28 @@ export interface ImageData {
   base64: string;
   mimeType: string;
   fileName: string;
+  filePath: string;
   fileSize: number;
+  originalExtension: string | null;
   width: number | null;
   height: number | null;
+}
+
+export type CommandErrorKind =
+  | 'file_not_found'
+  | 'target_not_folder'
+  | 'same_folder'
+  | 'no_association'
+  | 'access_denied'
+  | 'already_moving'
+  | 'copy_failed'
+  | 'remove_original_failed'
+  | 'open_failed'
+  | 'unknown';
+
+export interface CommandError {
+  kind: CommandErrorKind;
+  message: string;
 }
 
 export interface Settings {
@@ -50,4 +69,6 @@ export interface ViewerState {
   errorMessage: string | null;
   imageSrc: string | null;
   fileName: string;
+  fileSize: number;
+  originalExtension: string | null;
 }

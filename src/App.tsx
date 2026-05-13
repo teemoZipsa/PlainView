@@ -5,14 +5,23 @@ import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { Image as TauriImage } from '@tauri-apps/api/image';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
-import type { ViewerState, Rotation, Settings, DragMode, FitMode, CustomOpenApp } from './types';
+import type {
+  ViewerState,
+  Rotation,
+  Settings,
+  DragMode,
+  FitMode,
+  CustomOpenApp,
+  CommandError,
+  CommandErrorKind,
+} from './types';
 import './App.css';
 
 const MIN_ZOOM = 0.1;
@@ -64,6 +73,8 @@ function App() {
     errorMessage: null,
     imageSrc: null,
     fileName: '',
+    fileSize: 0,
+    originalExtension: null,
   });
   const [viewportSize, setViewportSize] = useState(() => ({
     width: window.innerWidth,
@@ -98,6 +109,7 @@ function App() {
   const fullscreenSnapshotRef = useRef<FullscreenSnapshot | null>(null);
   const isFullscreenProcessingRef = useRef(false);
   const isCopyingRef = useRef(false);
+  const isMovingRef = useRef(false);
 
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
@@ -121,6 +133,39 @@ function App() {
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
   }, []);
+
+  const isCommandError = useCallback((error: unknown): error is CommandError => {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'kind' in error &&
+      'message' in error &&
+      typeof (error as CommandError).kind === 'string' &&
+      typeof (error as CommandError).message === 'string'
+    );
+  }, []);
+
+  const getCommandErrorToast = useCallback(
+    (error: unknown, fallback: string) => {
+      if (!isCommandError(error)) return fallback;
+
+      const messages: Partial<Record<CommandErrorKind, string>> = {
+        file_not_found: '파일을 찾을 수 없습니다.',
+        target_not_folder: '이동할 폴더를 찾을 수 없습니다.',
+        same_folder: '이미 같은 폴더에 있습니다.',
+        no_association: '연결된 기본 앱이 없습니다.',
+        access_denied: '권한이 없어 작업할 수 없습니다.',
+        already_moving: '파일 이동이 이미 진행 중입니다.',
+        copy_failed: '다른 드라이브로 파일을 복사할 수 없습니다.',
+        remove_original_failed: '복사 후 원본 파일을 삭제할 수 없습니다.',
+        open_failed: '기본 앱으로 열 수 없습니다.',
+        unknown: fallback,
+      };
+
+      return messages[error.kind] ?? error.message ?? fallback;
+    },
+    [isCommandError]
+  );
 
   const getExecutableDisplayName = useCallback((path: string) => {
     const fileName = path.split(/[\\/]/).pop() || '앱';
@@ -263,6 +308,79 @@ function App() {
     [getViewportSize, calculateFitZoomForSize]
   );
 
+  const clampPanOffset = useCallback(
+    (
+      naturalSize: { width: number; height: number },
+      zoom: number,
+      rotation: Rotation,
+      panOffset: { x: number; y: number }
+    ) => {
+      const viewport = getViewportSize();
+      const rendered = getRenderedSize(naturalSize.width, naturalSize.height, zoom, rotation);
+      let x = panOffset.x;
+      let y = panOffset.y;
+
+      if (rendered.width <= viewport.width) {
+        x = 0;
+      } else {
+        const maxPanX = (rendered.width - viewport.width) / 2;
+        x = Math.max(-maxPanX, Math.min(maxPanX, x));
+      }
+
+      if (rendered.height <= viewport.height) {
+        y = 0;
+      } else {
+        const maxPanY = (rendered.height - viewport.height) / 2;
+        y = Math.max(-maxPanY, Math.min(maxPanY, y));
+      }
+
+      return { x, y };
+    },
+    [getRenderedSize, getViewportSize]
+  );
+
+  const setZoomWithCenter = useCallback(
+    (targetZoom: number) => {
+      setState((prev) => {
+        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoom));
+        const ratio = prev.zoom > 0 ? newZoom / prev.zoom : 1;
+        const scaledPan = {
+          x: prev.panOffset.x * ratio,
+          y: prev.panOffset.y * ratio,
+        };
+
+        return {
+          ...prev,
+          zoom: newZoom,
+          fitMode: 'auto' as const,
+          panOffset: clampPanOffset(prev.naturalSize, newZoom, prev.rotation, scaledPan),
+        };
+      });
+    },
+    [clampPanOffset]
+  );
+
+  const scaleZoomWithCenter = useCallback(
+    (factor: number) => {
+      setState((prev) => {
+        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, prev.zoom * factor));
+        const ratio = prev.zoom > 0 ? newZoom / prev.zoom : 1;
+        const scaledPan = {
+          x: prev.panOffset.x * ratio,
+          y: prev.panOffset.y * ratio,
+        };
+
+        return {
+          ...prev,
+          zoom: newZoom,
+          fitMode: 'auto' as const,
+          panOffset: clampPanOffset(prev.naturalSize, newZoom, prev.rotation, scaledPan),
+        };
+      });
+    },
+    [clampPanOffset]
+  );
+
   const renderedSize = getRenderedSize(
     state.naturalSize.width,
     state.naturalSize.height,
@@ -348,6 +466,8 @@ function App() {
           currentIndex: index ?? prev.currentIndex,
           imageSrc: result.src,
           fileName: result.fileName,
+          fileSize: result.fileSize,
+          originalExtension: result.originalExtension,
           naturalSize: { width: naturalW, height: naturalH },
           zoom: fitZoom,
           fitMode: 'auto',
@@ -429,18 +549,12 @@ function App() {
   // ---- Zoom ----
 
   const zoomIn = useCallback(() => {
-    setState((prev) => {
-      const newZoom = Math.min(MAX_ZOOM, prev.zoom * (1 + ZOOM_STEP));
-      return { ...prev, zoom: newZoom, fitMode: 'auto' as const };
-    });
-  }, []);
+    scaleZoomWithCenter(1 + ZOOM_STEP);
+  }, [scaleZoomWithCenter]);
 
   const zoomOut = useCallback(() => {
-    setState((prev) => {
-      const newZoom = Math.max(MIN_ZOOM, prev.zoom * (1 - ZOOM_STEP));
-      return { ...prev, zoom: newZoom, fitMode: 'auto' as const, panOffset: { x: 0, y: 0 } };
-    });
-  }, []);
+    scaleZoomWithCenter(1 - ZOOM_STEP);
+  }, [scaleZoomWithCenter]);
 
   const setOriginalSize = useCallback(() => {
     setState((prev) => ({
@@ -560,11 +674,90 @@ function App() {
     if (!state.currentFilePath) return;
 
     try {
-      await openPath(state.currentFilePath);
-    } catch {
-      showToast('기본 앱으로 열 수 없습니다.');
+      await invoke('open_with_default_app', { path: state.currentFilePath });
+    } catch (error) {
+      console.warn('Failed to open with default app:', error);
+      showToast(getCommandErrorToast(error, '기본 앱으로 열 수 없습니다.'));
     }
-  }, [closeContextMenu, showToast, state.currentFilePath]);
+  }, [closeContextMenu, getCommandErrorToast, showToast, state.currentFilePath]);
+
+  const handleMoveFile = useCallback(async () => {
+    closeContextMenu();
+    if (!state.currentFilePath || isMovingRef.current) {
+      if (isMovingRef.current) showToast('파일 이동이 이미 진행 중입니다.');
+      return;
+    }
+
+    let selected: string | string[] | null;
+    try {
+      selected = await openDialog({
+        multiple: false,
+        directory: true,
+        title: '이동할 폴더 선택',
+      });
+    } catch {
+      showToast('폴더 선택 창을 열 수 없습니다.');
+      return;
+    }
+
+    if (typeof selected !== 'string') return;
+
+    const filePathAtStart = state.currentFilePath;
+    isMovingRef.current = true;
+    requestIdRef.current += 1;
+
+    try {
+      await invoke<string>('move_file_to_folder', {
+        filePath: filePathAtStart,
+        targetFolder: selected,
+      });
+
+      const nextList = state.imageList.filter(
+        (path) => path.toLowerCase() !== filePathAtStart.toLowerCase()
+      );
+
+      if (nextList.length === 0) {
+        requestIdRef.current += 1;
+        setState((prev) => ({
+          ...prev,
+          currentFilePath: null,
+          imageList: [],
+          currentIndex: -1,
+          zoom: 1,
+          rotation: 0,
+          fitMode: 'auto',
+          panOffset: { x: 0, y: 0 },
+          naturalSize: { width: 0, height: 0 },
+          isLoading: false,
+          errorMessage: null,
+          imageSrc: null,
+          fileName: '',
+          fileSize: 0,
+          originalExtension: null,
+        }));
+        showToast('파일을 이동했습니다.');
+        return;
+      }
+
+      const removedIndex = Math.max(0, state.currentIndex);
+      const nextIndex = Math.min(removedIndex, nextList.length - 1);
+      await openImage(nextList[nextIndex], nextList, nextIndex);
+      showToast('파일을 이동했습니다.');
+    } catch (error) {
+      console.warn('Failed to move file:', error);
+      showToast(getCommandErrorToast(error, '파일을 이동할 수 없습니다.'));
+    } finally {
+      isMovingRef.current = false;
+    }
+  }, [
+    closeContextMenu,
+    getCommandErrorToast,
+    openImage,
+    showToast,
+    state.currentFilePath,
+    state.currentIndex,
+    state.imageList,
+  ]);
 
   const handleOpenCustomApp = useCallback(
     async (app: CustomOpenApp) => {
@@ -920,6 +1113,9 @@ function App() {
     onCopyImage: () => {
       void handleCopyImage();
     },
+    onMoveFile: () => {
+      void handleMoveFile();
+    },
   });
 
   // ---- Context menu dismissal ----
@@ -1239,11 +1435,19 @@ function App() {
         totalImages={state.imageList.length}
         zoom={state.zoom}
         fileName={state.fileName}
+        imageInfo={{
+          filePath: state.currentFilePath,
+          fileSize: state.fileSize,
+          width: state.naturalSize.width,
+          height: state.naturalSize.height,
+          originalExtension: state.originalExtension,
+        }}
         onClose={closeApp}
         onPrevImage={() => navigateImage(-1)}
         onNextImage={() => navigateImage(1)}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
+        onSetZoom={setZoomWithCenter}
         onOriginalSize={setOriginalSize}
         onFitScreen={fitToScreen}
         onToggleAlwaysOnTop={toggleAlwaysOnTop}
@@ -1262,6 +1466,7 @@ function App() {
           onCopyImage={handleCopyImageFromMenu}
           onReveal={handleRevealInExplorer}
           onOpenDefault={handleOpenDefaultApp}
+          onMoveFile={handleMoveFile}
           onOpenCustom={handleOpenCustomApp}
           onRegisterApp={handleRegisterCustomApp}
           onRequestRemoveApp={handleRequestRemoveCustomApp}

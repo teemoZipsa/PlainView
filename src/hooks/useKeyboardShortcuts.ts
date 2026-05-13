@@ -12,6 +12,7 @@ interface KeyboardShortcutsProps {
   onRotate: () => void;
   canCopyImage: () => boolean;
   onCopyImage: () => void;
+  onMoveFile: () => void;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -27,6 +28,15 @@ function isEditableTarget(target: EventTarget | null): boolean {
 function isCopyShortcut(e: KeyboardEvent): boolean {
   return (
     e.key.toLowerCase() === 'c' &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  );
+}
+
+function isMoveShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 'm' &&
     (e.ctrlKey || e.metaKey) &&
     !e.altKey &&
     !e.shiftKey
@@ -53,6 +63,12 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
           e.preventDefault();
           p.onCopyImage();
         }
+        return;
+      }
+
+      if (isMoveShortcut(e)) {
+        e.preventDefault();
+        p.onMoveFile();
         return;
       }
 

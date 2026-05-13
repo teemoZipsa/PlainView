@@ -1,4 +1,12 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
+
+interface ImageInfo {
+  filePath: string | null;
+  fileSize: number;
+  width: number;
+  height: number;
+  originalExtension: string | null;
+}
 
 interface OverlayControlsProps {
   isVisible: boolean;
@@ -7,11 +15,13 @@ interface OverlayControlsProps {
   totalImages: number;
   zoom: number;
   fileName: string;
+  imageInfo: ImageInfo;
   onClose: () => void;
   onPrevImage: () => void;
   onNextImage: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onSetZoom: (zoom: number) => void;
   onOriginalSize: () => void;
   onFitScreen: () => void;
   onToggleAlwaysOnTop: () => void;
@@ -27,11 +37,13 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   totalImages,
   zoom,
   fileName,
+  imageInfo,
   onClose,
   onPrevImage,
   onNextImage,
   onZoomIn,
   onZoomOut,
+  onSetZoom,
   onOriginalSize,
   onFitScreen,
   onToggleAlwaysOnTop,
@@ -39,9 +51,82 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   onOverlayEnter,
   onOverlayLeave,
 }) => {
+  const infoBarRef = useRef<HTMLDivElement>(null);
+  const editSessionRef = useRef(false);
+  const [isEditingZoom, setIsEditingZoom] = useState(false);
+  const [zoomDraft, setZoomDraft] = useState('');
+  const [isInfoVisible, setIsInfoVisible] = useState(false);
+  const [infoPopoverPosition, setInfoPopoverPosition] = useState({ left: 0, top: 0 });
+
   const handleButtonClick = (e: React.MouseEvent, action: () => void) => {
     e.stopPropagation();
     action();
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '알 수 없음';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+
+    const precision = unitIndex === 0 || size >= 100 ? 0 : 1;
+    return `${size.toFixed(precision)} ${units[unitIndex]}`;
+  };
+
+  const updateInfoPopoverPosition = useCallback(() => {
+    const rect = infoBarRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const popoverWidth = Math.min(360, Math.max(220, window.innerWidth - 16));
+    const minLeft = 8 + popoverWidth / 2;
+    const maxLeft = window.innerWidth - 8 - popoverWidth / 2;
+    const desiredLeft = rect.left + rect.width / 2;
+    const left = Math.max(minLeft, Math.min(maxLeft, desiredLeft));
+    const top = Math.max(8, rect.top - 8);
+
+    setInfoPopoverPosition({ left, top });
+  }, []);
+
+  const startZoomEdit = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    editSessionRef.current = true;
+    setZoomDraft(`${Math.round(zoom * 100)}`);
+    setIsEditingZoom(true);
+  };
+
+  const cancelZoomEdit = () => {
+    editSessionRef.current = false;
+    setIsEditingZoom(false);
+    setZoomDraft('');
+  };
+
+  const commitZoomEdit = () => {
+    if (!editSessionRef.current) return;
+    editSessionRef.current = false;
+
+    const normalized = zoomDraft.trim().replace(/%/g, '');
+    const parsed = Number(normalized);
+    setIsEditingZoom(false);
+    setZoomDraft('');
+
+    if (!normalized || !Number.isFinite(parsed)) return;
+
+    const clampedPercent = Math.max(10, Math.min(1000, parsed));
+    onSetZoom(clampedPercent / 100);
+  };
+
+  const showInfoPopover = () => {
+    updateInfoPopoverPosition();
+    setIsInfoVisible(true);
+  };
+
+  const hideInfoPopover = () => {
+    setIsInfoVisible(false);
   };
 
   return (
@@ -129,7 +214,40 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>
-          <span className="zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span>
+          {isEditingZoom ? (
+            <input
+              className="zoom-label zoom-input"
+              value={zoomDraft}
+              autoFocus
+              inputMode="numeric"
+              aria-label="확대 비율 입력"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => setZoomDraft(event.target.value)}
+              onBlur={commitZoomEdit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitZoomEdit();
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  cancelZoomEdit();
+                }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="zoom-label zoom-label-button"
+              title="클릭하여 확대 비율 입력"
+              aria-label="확대 비율 직접 입력"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={startZoomEdit}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+          )}
           <button
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onZoomIn)}
@@ -176,12 +294,58 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           </button>
         </div>
         {/* File info bar */}
-        <div className="overlay-info-bar">
+        <div
+          ref={infoBarRef}
+          className="overlay-info-bar"
+          onMouseEnter={showInfoPopover}
+          onMouseMove={updateInfoPopoverPosition}
+          onMouseLeave={hideInfoPopover}
+        >
           <span className="info-filename" title={fileName}>{fileName}</span>
           {totalImages > 1 && (
             <span className="info-counter">{currentIndex + 1} / {totalImages}</span>
           )}
         </div>
+        {isInfoVisible && (
+          <div
+            className="info-popover"
+            style={{
+              left: infoPopoverPosition.left,
+              top: infoPopoverPosition.top,
+            }}
+          >
+            <div className="info-popover-row">
+              <span>파일명</span>
+              <strong title={fileName}>{fileName || '알 수 없음'}</strong>
+            </div>
+            <div className="info-popover-row">
+              <span>경로</span>
+              <strong title={imageInfo.filePath ?? ''}>{imageInfo.filePath || '알 수 없음'}</strong>
+            </div>
+            <div className="info-popover-row">
+              <span>크기</span>
+              <strong>
+                {imageInfo.width > 0 && imageInfo.height > 0
+                  ? `${imageInfo.width} x ${imageInfo.height}`
+                  : '알 수 없음'}
+              </strong>
+            </div>
+            <div className="info-popover-row">
+              <span>파일 크기</span>
+              <strong>{formatFileSize(imageInfo.fileSize)}</strong>
+            </div>
+            <div className="info-popover-row">
+              <span>확장자</span>
+              <strong>{imageInfo.originalExtension || '알 수 없음'}</strong>
+            </div>
+            {totalImages > 1 && (
+              <div className="info-popover-row">
+                <span>순번</span>
+                <strong>{currentIndex + 1} / {totalImages}</strong>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
