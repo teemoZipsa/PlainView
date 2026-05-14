@@ -521,6 +521,14 @@ html, body, #root {
   z-index: 101;
 }
 
+.nav-btn:hover {
+  transform: translateY(-50%) scale(1.06);
+}
+
+.nav-btn:active {
+  transform: translateY(-50%) scale(0.96);
+}
+
 .nav-left {
   left: 10px;
 }
