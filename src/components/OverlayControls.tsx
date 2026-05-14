@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
+import type { BackgroundMode } from '../types';
 
 interface ImageInfo {
   filePath: string | null;
@@ -11,6 +12,7 @@ interface ImageInfo {
 interface OverlayControlsProps {
   isVisible: boolean;
   isAlwaysOnTop: boolean;
+  backgroundMode: BackgroundMode;
   currentIndex: number;
   totalImages: number;
   zoom: number;
@@ -25,6 +27,7 @@ interface OverlayControlsProps {
   onOriginalSize: () => void;
   onFitScreen: () => void;
   onToggleAlwaysOnTop: () => void;
+  onToggleBackgroundMode: () => void;
   onRotate: () => void;
   onOverlayEnter: () => void;
   onOverlayLeave: () => void;
@@ -33,6 +36,7 @@ interface OverlayControlsProps {
 const OverlayControls: React.FC<OverlayControlsProps> = ({
   isVisible,
   isAlwaysOnTop,
+  backgroundMode,
   currentIndex,
   totalImages,
   zoom,
@@ -47,6 +51,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   onOriginalSize,
   onFitScreen,
   onToggleAlwaysOnTop,
+  onToggleBackgroundMode,
   onRotate,
   onOverlayEnter,
   onOverlayLeave,
@@ -135,8 +140,32 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       onMouseEnter={onOverlayEnter}
       onMouseLeave={onOverlayLeave}
     >
-      {/* Top-right: close + pin */}
+      {/* Top-right: theme + pin + close */}
       <div className="overlay-top-right">
+        <button
+          className="overlay-btn theme-btn"
+          onClick={(e) => handleButtonClick(e, onToggleBackgroundMode)}
+          title={backgroundMode === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+          aria-label={backgroundMode === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+        >
+          {backgroundMode === 'dark' ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2" />
+              <path d="M12 20v2" />
+              <path d="m4.93 4.93 1.41 1.41" />
+              <path d="m17.66 17.66 1.41 1.41" />
+              <path d="M2 12h2" />
+              <path d="M20 12h2" />
+              <path d="m6.34 17.66-1.41 1.41" />
+              <path d="m19.07 4.93-1.41 1.41" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3a6 6 0 0 0 8.74 6.74A9 9 0 1 1 12 3z" />
+            </svg>
+          )}
+        </button>
         <button
           className={`overlay-btn pin-btn ${isAlwaysOnTop ? 'active' : ''}`}
           onClick={(e) => handleButtonClick(e, onToggleAlwaysOnTop)}

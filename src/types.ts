@@ -26,12 +26,13 @@ export interface CommandError {
   message: string;
 }
 
+export type BackgroundMode = 'dark' | 'light';
+
 export interface Settings {
   rememberWindowPosition: boolean;
   alwaysOnTopDefault: boolean;
   loopNavigation: boolean;
-  /** @future Stored for forward compatibility — not yet applied in UI. */
-  backgroundMode: string;
+  backgroundMode: BackgroundMode;
   /** @future Stored for forward compatibility — not yet applied in UI. */
   defaultFitMode: string;
   lastWindowBounds: WindowBounds | null;

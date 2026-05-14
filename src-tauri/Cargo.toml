@@ -1,6 +1,6 @@
 [package]
 name = "plainview"
-version = "0.6.0"
+version = "0.6.1"
 description = "A minimal ad-free image viewer for Windows"
 authors = ["teemoZipsa"]
 edition = "2021"

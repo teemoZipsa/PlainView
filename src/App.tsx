@@ -16,6 +16,7 @@ import type {
   ViewerState,
   Rotation,
   Settings,
+  BackgroundMode,
   DragMode,
   FitMode,
   CustomOpenApp,
@@ -58,6 +59,9 @@ const waitForNextFrame = () =>
     requestAnimationFrame(() => resolve());
   });
 
+const normalizeBackgroundMode = (mode: unknown): BackgroundMode =>
+  mode === 'light' ? 'light' : 'dark';
+
 function App() {
   const [state, setState] = useState<ViewerState>({
     currentFilePath: null,
@@ -85,6 +89,7 @@ function App() {
   const [registrationDraft, setRegistrationDraft] = useState<AppRegistrationDraft | null>(null);
   const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
 
   const settingsRef = useRef<Settings>({
     rememberWindowPosition: true,
@@ -614,6 +619,23 @@ function App() {
       // Ignore errors
     }
   }, [state.isAlwaysOnTop, saveSettings]);
+
+  // ---- Background mode ----
+
+  const toggleBackgroundMode = useCallback(() => {
+    const nextMode: BackgroundMode = backgroundMode === 'dark' ? 'light' : 'dark';
+    const nextSettings: Settings = {
+      ...settingsRef.current,
+      backgroundMode: nextMode,
+    };
+
+    settingsRef.current = nextSettings;
+    setBackgroundMode(nextMode);
+
+    void saveSettings(nextSettings).catch((error) => {
+      console.warn('Failed to save background mode setting.', error);
+    });
+  }, [backgroundMode, saveSettings]);
 
   // ---- Close ----
 
@@ -1269,18 +1291,25 @@ function App() {
       // Load settings
       try {
         const settings = await loadSettings();
-        settingsRef.current = settings;
-        setCustomOpenApps(settings.customOpenApps ?? []);
+        const normalizedMode = normalizeBackgroundMode(settings.backgroundMode);
+        const normalizedSettings: Settings = {
+          ...settings,
+          backgroundMode: normalizedMode,
+        };
+
+        settingsRef.current = normalizedSettings;
+        setBackgroundMode(normalizedMode);
+        setCustomOpenApps(normalizedSettings.customOpenApps ?? []);
 
         // Apply always-on-top default
-        if (settings.alwaysOnTopDefault) {
+        if (normalizedSettings.alwaysOnTopDefault) {
           await invoke('set_always_on_top', { onTop: true });
           setState((prev) => ({ ...prev, isAlwaysOnTop: true }));
         }
 
         // Apply saved window position/size (restored on startup)
-        if (settings.rememberWindowPosition && settings.lastWindowBounds) {
-          const bounds = settings.lastWindowBounds;
+        if (normalizedSettings.rememberWindowPosition && normalizedSettings.lastWindowBounds) {
+          const bounds = normalizedSettings.lastWindowBounds;
           try {
             await invoke('resize_window', {
               width: bounds.width,
@@ -1393,7 +1422,7 @@ function App() {
 
   return (
     <div
-      className={`app-container ${state.isAlwaysOnTop ? 'pinned' : ''}`}
+      className={`app-container theme-${backgroundMode} ${state.isAlwaysOnTop ? 'pinned' : ''}`}
       style={{ cursor: getCursorStyle() }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -1431,6 +1460,7 @@ function App() {
       <OverlayControls
         isVisible={overlay.isVisible}
         isAlwaysOnTop={state.isAlwaysOnTop}
+        backgroundMode={backgroundMode}
         currentIndex={state.currentIndex}
         totalImages={state.imageList.length}
         zoom={state.zoom}
@@ -1451,6 +1481,7 @@ function App() {
         onOriginalSize={setOriginalSize}
         onFitScreen={fitToScreen}
         onToggleAlwaysOnTop={toggleAlwaysOnTop}
+        onToggleBackgroundMode={toggleBackgroundMode}
         onRotate={rotate}
         onOverlayEnter={overlay.handleOverlayEnter}
         onOverlayLeave={overlay.handleOverlayLeave}
