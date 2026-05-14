@@ -330,7 +330,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           onMouseMove={updateInfoPopoverPosition}
           onMouseLeave={hideInfoPopover}
         >
-          <span className="info-filename" title={fileName}>{fileName}</span>
+          <span className="info-filename">{fileName}</span>
           {totalImages > 1 && (
             <span className="info-counter">{currentIndex + 1} / {totalImages}</span>
           )}
