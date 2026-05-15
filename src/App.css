@@ -79,7 +79,7 @@ html, body, #root {
   --text-muted: #6b7280;
   --text-faint: rgba(31, 35, 40, 0.46);
   --surface-overlay: rgba(255, 255, 255, 0.78);
-  --surface-overlay-hover: rgba(31, 35, 40, 0.1);
+  --surface-overlay-hover: rgba(31, 35, 40, 0.18);
   --surface-overlay-active: rgba(31, 35, 40, 0.08);
   --surface-toolbar: rgba(255, 255, 255, 0.88);
   --surface-info: rgba(255, 255, 255, 0.78);
