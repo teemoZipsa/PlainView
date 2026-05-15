@@ -335,47 +335,43 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             <span className="info-counter">{currentIndex + 1} / {totalImages}</span>
           )}
         </div>
-        {isInfoVisible && (
-          <div
-            className="info-popover"
-            style={{
-              left: infoPopoverPosition.left,
-              top: infoPopoverPosition.top,
-            }}
-          >
-            <div className="info-popover-row">
-              <span>파일명</span>
-              <strong title={fileName}>{fileName || '알 수 없음'}</strong>
-            </div>
-            <div className="info-popover-row">
-              <span>경로</span>
-              <strong title={imageInfo.filePath ?? ''}>{imageInfo.filePath || '알 수 없음'}</strong>
-            </div>
-            <div className="info-popover-row">
-              <span>크기</span>
-              <strong>
-                {imageInfo.width > 0 && imageInfo.height > 0
-                  ? `${imageInfo.width} x ${imageInfo.height}`
-                  : '알 수 없음'}
-              </strong>
-            </div>
-            <div className="info-popover-row">
-              <span>파일 크기</span>
-              <strong>{formatFileSize(imageInfo.fileSize)}</strong>
-            </div>
-            <div className="info-popover-row">
-              <span>확장자</span>
-              <strong>{imageInfo.originalExtension || '알 수 없음'}</strong>
-            </div>
-            {totalImages > 1 && (
-              <div className="info-popover-row">
-                <span>순번</span>
-                <strong>{currentIndex + 1} / {totalImages}</strong>
-              </div>
-            )}
-          </div>
-        )}
       </div>
+      {isInfoVisible && (
+        <div
+          className="info-popover"
+          style={{
+            left: infoPopoverPosition.left,
+            top: infoPopoverPosition.top,
+          }}
+        >
+          <div className="info-popover-row">
+            <span>경로</span>
+            <strong title={imageInfo.filePath ?? ''}>{imageInfo.filePath || '알 수 없음'}</strong>
+          </div>
+          <div className="info-popover-row">
+            <span>크기</span>
+            <strong>
+              {imageInfo.width > 0 && imageInfo.height > 0
+                ? `${imageInfo.width} x ${imageInfo.height}`
+                : '알 수 없음'}
+            </strong>
+          </div>
+          <div className="info-popover-row">
+            <span>파일 크기</span>
+            <strong>{formatFileSize(imageInfo.fileSize)}</strong>
+          </div>
+          <div className="info-popover-row">
+            <span>확장자</span>
+            <strong>{imageInfo.originalExtension || '알 수 없음'}</strong>
+          </div>
+          {totalImages > 1 && (
+            <div className="info-popover-row">
+              <span>순번</span>
+              <strong>{currentIndex + 1} / {totalImages}</strong>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
