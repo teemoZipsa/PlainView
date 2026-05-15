@@ -613,8 +613,16 @@ function App() {
       await invoke('set_always_on_top', { onTop: newValue });
       setState((prev) => ({ ...prev, isAlwaysOnTop: newValue }));
 
-      settingsRef.current.alwaysOnTopDefault = newValue;
-      saveSettings(settingsRef.current);
+      const nextSettings: Settings = {
+        ...settingsRef.current,
+        alwaysOnTopDefault: newValue,
+      };
+
+      settingsRef.current = nextSettings;
+
+      void saveSettings(nextSettings).catch((error) => {
+        console.warn('Failed to save always-on-top setting.', error);
+      });
     } catch {
       // Ignore errors
     }
@@ -891,6 +899,8 @@ function App() {
 
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
+      if (!state.imageSrc || state.isLoading || state.errorMessage) return;
+
       e.preventDefault();
       if (e.deltaY < 0) {
         zoomIn();
@@ -898,7 +908,7 @@ function App() {
         zoomOut();
       }
     },
-    [zoomIn, zoomOut]
+    [state.imageSrc, state.isLoading, state.errorMessage, zoomIn, zoomOut]
   );
 
   // ---- Drag / Pan ----
@@ -945,7 +955,9 @@ function App() {
 
       if (mode === 'window-move') {
         const appWindow = getCurrentWindow();
-        appWindow.startDragging();
+        void appWindow.startDragging().catch((error) => {
+          console.warn('Failed to start window dragging:', error);
+        });
         isDraggingRef.current = false;
       }
 
@@ -1138,6 +1150,7 @@ function App() {
     onMoveFile: () => {
       void handleMoveFile();
     },
+    isEnabled: () => !contextMenu && !registrationDraft && !removeTarget,
   });
 
   // ---- Context menu dismissal ----

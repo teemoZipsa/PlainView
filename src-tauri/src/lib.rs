@@ -35,15 +35,33 @@ const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
 const ERROR_NO_ASSOCIATION: u32 = 1155;
 const ERROR_NOT_SAME_DEVICE: i32 = 17;
 
+fn default_background_mode() -> String {
+    "dark".to_string()
+}
+
+fn default_fit_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Settings structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    #[serde(default = "default_true")]
     pub remember_window_position: bool,
+    #[serde(default)]
     pub always_on_top_default: bool,
+    #[serde(default = "default_true")]
     pub loop_navigation: bool,
+    #[serde(default = "default_background_mode")]
     pub background_mode: String,
+    #[serde(default = "default_fit_mode")]
     pub default_fit_mode: String,
+    #[serde(default)]
     pub last_window_bounds: Option<WindowBounds>,
     #[serde(default)]
     pub custom_open_apps: Vec<CustomOpenApp>,
@@ -71,8 +89,8 @@ impl Default for Settings {
             remember_window_position: true,
             always_on_top_default: false,
             loop_navigation: true,
-            background_mode: "dark".to_string(),
-            default_fit_mode: "auto".to_string(),
+            background_mode: default_background_mode(),
+            default_fit_mode: default_fit_mode(),
             last_window_bounds: None,
             custom_open_apps: Vec::new(),
         }

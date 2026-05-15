@@ -56,6 +56,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   onOverlayEnter,
   onOverlayLeave,
 }) => {
+  const hasImage = Boolean(imageInfo.filePath) && totalImages > 0;
   const infoBarRef = useRef<HTMLDivElement>(null);
   const editSessionRef = useRef(false);
   const [isEditingZoom, setIsEditingZoom] = useState(false);
@@ -143,6 +144,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       {/* Top-right: theme + pin + close */}
       <div className="overlay-top-right">
         <button
+          type="button"
           className="overlay-btn theme-btn"
           onClick={(e) => handleButtonClick(e, onToggleBackgroundMode)}
           title={backgroundMode === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
@@ -167,6 +169,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           )}
         </button>
         <button
+          type="button"
           className={`overlay-btn pin-btn ${isAlwaysOnTop ? 'active' : ''}`}
           onClick={(e) => handleButtonClick(e, onToggleAlwaysOnTop)}
           title={isAlwaysOnTop ? '고정 해제 (T)' : '항상 위 고정 (T)'}
@@ -190,6 +193,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           </svg>
         </button>
         <button
+          type="button"
           className="overlay-btn close-btn"
           onClick={(e) => handleButtonClick(e, onClose)}
           title="닫기 (Esc)"
@@ -203,8 +207,9 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       </div>
 
       {/* Left-center: prev */}
-      {totalImages > 1 && (
+      {hasImage && totalImages > 1 && (
         <button
+          type="button"
           className="overlay-btn nav-btn nav-left"
           onClick={(e) => handleButtonClick(e, onPrevImage)}
           title="이전 이미지 (←)"
@@ -217,8 +222,9 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       )}
 
       {/* Right-center: next */}
-      {totalImages > 1 && (
+      {hasImage && totalImages > 1 && (
         <button
+          type="button"
           className="overlay-btn nav-btn nav-right"
           onClick={(e) => handleButtonClick(e, onNextImage)}
           title="다음 이미지 (→)"
@@ -231,9 +237,11 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       )}
 
       {/* Bottom-center: zoom controls + rotate */}
+      {hasImage && (
       <div className="overlay-bottom-center">
         <div className="overlay-bottom-row">
           <button
+            type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onZoomOut)}
             title="축소 (-)"
@@ -278,6 +286,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             </button>
           )}
           <button
+            type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onZoomIn)}
             title="확대 (+)"
@@ -290,6 +299,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           </button>
           <div className="zoom-divider" />
           <button
+            type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onOriginalSize)}
             title="원본 크기 (0)"
@@ -298,6 +308,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             1:1
           </button>
           <button
+            type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onFitScreen)}
             title="화면 맞춤 (F)"
@@ -311,6 +322,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             </svg>
           </button>
           <button
+            type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onRotate)}
             title="회전 (R)"
@@ -336,7 +348,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           )}
         </div>
       </div>
-      {isInfoVisible && (
+      )}
+      {hasImage && isInfoVisible && (
         <div
           className="info-popover"
           style={{

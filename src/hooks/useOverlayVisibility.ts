@@ -4,7 +4,7 @@ const HIDE_DELAY = 2000; // 2 seconds
 
 export function useOverlayVisibility() {
   const [isVisible, setIsVisible] = useState(false);
-  const [isOnOverlay, setIsOnOverlay] = useState(false);
+  const isOnOverlayRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearHideTimer = useCallback(() => {
@@ -17,11 +17,11 @@ export function useOverlayVisibility() {
   const startHideTimer = useCallback(() => {
     clearHideTimer();
     hideTimerRef.current = setTimeout(() => {
-      if (!isOnOverlay) {
+      if (!isOnOverlayRef.current) {
         setIsVisible(false);
       }
     }, HIDE_DELAY);
-  }, [clearHideTimer, isOnOverlay]);
+  }, [clearHideTimer]);
 
   const showOverlay = useCallback(() => {
     setIsVisible(true);
@@ -39,17 +39,18 @@ export function useOverlayVisibility() {
   }, [startHideTimer]);
 
   const handleMouseLeave = useCallback(() => {
+    isOnOverlayRef.current = false;
     hideOverlay();
   }, [hideOverlay]);
 
   const handleOverlayEnter = useCallback(() => {
-    setIsOnOverlay(true);
+    isOnOverlayRef.current = true;
     clearHideTimer();
     setIsVisible(true);
   }, [clearHideTimer]);
 
   const handleOverlayLeave = useCallback(() => {
-    setIsOnOverlay(false);
+    isOnOverlayRef.current = false;
     startHideTimer();
   }, [startHideTimer]);
 

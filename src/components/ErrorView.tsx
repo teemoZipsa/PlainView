@@ -17,7 +17,7 @@ const ErrorView: React.FC<ErrorViewProps> = ({ message, onClose }) => {
         </svg>
       </div>
       <p className="error-message">{message}</p>
-      <button className="error-close-btn" onClick={onClose}>
+      <button type="button" className="error-close-btn" onClick={onClose}>
         닫기
       </button>
     </div>

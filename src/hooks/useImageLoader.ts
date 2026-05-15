@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useRef } from 'react';
-import type { ImageData, Settings } from '../types';
+import type { LoadedImageData, Settings } from '../types';
 
 // ---- LRU Cache with size limit ----
 
@@ -80,7 +80,7 @@ export function useImageLoader() {
     loadingRef.current = true;
 
     try {
-      const data = await invoke<ImageData>('read_image', { path: filePath });
+      const data = await invoke<LoadedImageData>('read_image', { path: filePath });
       const src = `data:${data.mimeType};base64,${data.base64}`;
 
       // LRU cache set (auto-evicts oldest if full)
@@ -122,7 +122,7 @@ export function useImageLoader() {
     for (const p of paths) {
       if (!preloadCache.has(p)) {
         try {
-          const data = await invoke<ImageData>('read_image', { path: p });
+          const data = await invoke<LoadedImageData>('read_image', { path: p });
           cacheSet(p, {
             src: `data:${data.mimeType};base64,${data.base64}`,
             fileName: data.fileName,
@@ -143,7 +143,20 @@ export function useImageLoader() {
   }, []);
 
   const loadSettings = useCallback(async (): Promise<Settings> => {
-    return invoke<Settings>('load_settings');
+    const settings = await invoke<Partial<Settings>>('load_settings');
+
+    return {
+      rememberWindowPosition: settings.rememberWindowPosition ?? true,
+      alwaysOnTopDefault: settings.alwaysOnTopDefault ?? false,
+      loopNavigation: settings.loopNavigation ?? true,
+      backgroundMode: settings.backgroundMode === 'light' ? 'light' : 'dark',
+      defaultFitMode:
+        settings.defaultFitMode === 'fit' || settings.defaultFitMode === 'original'
+          ? settings.defaultFitMode
+          : 'auto',
+      lastWindowBounds: settings.lastWindowBounds ?? null,
+      customOpenApps: settings.customOpenApps ?? [],
+    };
   }, []);
 
   const saveSettings = useCallback(async (settings: Settings): Promise<void> => {

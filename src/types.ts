@@ -1,4 +1,4 @@
-export interface ImageData {
+export interface LoadedImageData {
   base64: string;
   mimeType: string;
   fileName: string;
@@ -34,7 +34,7 @@ export interface Settings {
   loopNavigation: boolean;
   backgroundMode: BackgroundMode;
   /** @future Stored for forward compatibility — not yet applied in UI. */
-  defaultFitMode: string;
+  defaultFitMode: FitMode;
   lastWindowBounds: WindowBounds | null;
   customOpenApps: CustomOpenApp[];
 }

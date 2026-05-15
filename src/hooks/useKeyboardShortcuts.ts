@@ -13,6 +13,7 @@ interface KeyboardShortcutsProps {
   canCopyImage: () => boolean;
   onCopyImage: () => void;
   onMoveFile: () => void;
+  isEnabled?: () => boolean;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -57,6 +58,10 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
       }
 
       const p = propsRef.current;
+
+      if (p.isEnabled && !p.isEnabled()) {
+        return;
+      }
 
       if (isCopyShortcut(e)) {
         if (p.canCopyImage()) {
