@@ -1,7 +1,7 @@
 import type { RefObject } from 'react';
 import type { CustomOpenApp } from '../types';
 
-type SubmenuDirection = 'right' | 'left';
+type SubmenuDirection = 'right' | 'left' | 'stacked';
 
 interface ContextMenuProps {
   menuRef: RefObject<HTMLDivElement | null>;
@@ -13,6 +13,8 @@ interface ContextMenuProps {
   onReveal: () => void;
   onOpenDefault: () => void;
   onMoveFile: () => void;
+  onSaveAs: () => void;
+  onMoveToTrash: () => void;
   onOpenCustom: (app: CustomOpenApp) => void;
   onRegisterApp: () => void;
   onRequestRemoveApp: (app: CustomOpenApp) => void;
@@ -29,6 +31,8 @@ export default function ContextMenu({
   onReveal,
   onOpenDefault,
   onMoveFile,
+  onSaveAs,
+  onMoveToTrash,
   onOpenCustom,
   onRegisterApp,
   onRequestRemoveApp,
@@ -55,8 +59,14 @@ export default function ContextMenu({
       <button className="context-menu-item" type="button" role="menuitem" onClick={onMoveFile}>
         다른 폴더로 이동...
       </button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onSaveAs}>
+        다른 이름으로 저장...
+      </button>
+      <button className="context-menu-item danger" type="button" role="menuitem" onClick={onMoveToTrash}>
+        휴지통으로 이동
+      </button>
 
-      <div className="context-menu-item context-menu-parent" role="menuitem" tabIndex={0}>
+      <div className={`context-menu-item context-menu-parent submenu-${submenuDirection}`} role="menuitem" tabIndex={0}>
         <span>사용자 정의 앱으로 열기</span>
         <span className="context-menu-arrow">›</span>
         <div className={`context-submenu ${submenuDirection}`}>
@@ -80,7 +90,7 @@ export default function ContextMenu({
           <button className="context-menu-item" type="button" role="menuitem" onClick={onRegisterApp}>
             앱 등록...
           </button>
-          <div className="context-menu-item context-menu-parent" role="menuitem" tabIndex={0}>
+          <div className={`context-menu-item context-menu-parent submenu-${submenuDirection}`} role="menuitem" tabIndex={0}>
             <span>등록 앱 제거</span>
             <span className="context-menu-arrow">›</span>
             <div className={`context-submenu nested ${submenuDirection}`}>

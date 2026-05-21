@@ -19,6 +19,8 @@ export type CommandErrorKind =
   | 'copy_failed'
   | 'remove_original_failed'
   | 'open_failed'
+  | 'trash_failed'
+  | 'save_failed'
   | 'unknown';
 
 export interface CommandError {

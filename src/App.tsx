@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { Image as TauriImage } from '@tauri-apps/api/image';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import ContextMenu from './components/ContextMenu';
@@ -45,13 +45,18 @@ interface FullscreenSnapshot {
 interface ContextMenuState {
   x: number;
   y: number;
-  submenuDirection: 'right' | 'left';
+  submenuDirection: 'right' | 'left' | 'stacked';
 }
 
 interface AppRegistrationDraft {
   executablePath: string;
   defaultName: string;
   name: string;
+}
+
+interface GifPauseState {
+  filePath: string;
+  pausedSrc: string;
 }
 
 const waitForNextFrame = () =>
@@ -90,6 +95,7 @@ function App() {
   const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
+  const [gifPause, setGifPause] = useState<GifPauseState | null>(null);
 
   const settingsRef = useRef<Settings>({
     rememberWindowPosition: true,
@@ -115,6 +121,15 @@ function App() {
   const isFullscreenProcessingRef = useRef(false);
   const isCopyingRef = useRef(false);
   const isMovingRef = useRef(false);
+  const isTrashingRef = useRef(false);
+  const isSavingRef = useRef(false);
+  const hasDraggedRef = useRef(false);
+  const gifPauseRef = useRef<GifPauseState | null>(null);
+  const gifClickSequenceRef = useRef<{
+    filePath: string;
+    initialPause: GifPauseState | null;
+    count: number;
+  } | null>(null);
 
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
@@ -137,6 +152,11 @@ function App() {
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
+  }, []);
+
+  const updateGifPause = useCallback((nextPause: GifPauseState | null) => {
+    gifPauseRef.current = nextPause;
+    setGifPause(nextPause);
   }, []);
 
   const isCommandError = useCallback((error: unknown): error is CommandError => {
@@ -164,6 +184,8 @@ function App() {
         copy_failed: '다른 드라이브로 파일을 복사할 수 없습니다.',
         remove_original_failed: '복사 후 원본 파일을 삭제할 수 없습니다.',
         open_failed: '기본 앱으로 열 수 없습니다.',
+        trash_failed: '휴지통으로 이동할 수 없습니다.',
+        save_failed: '파일을 저장할 수 없습니다.',
         unknown: fallback,
       };
 
@@ -403,6 +425,8 @@ function App() {
   const openImage = useCallback(
     async (filePath: string, imageList?: string[], index?: number) => {
       const myRequestId = ++requestIdRef.current;
+      updateGifPause(null);
+      gifClickSequenceRef.current = null;
 
       setState((prev) => ({
         ...prev,
@@ -503,7 +527,7 @@ function App() {
         }));
       }
     },
-    [loadImage, preloadImages, calculateFitZoomForSize, state.imageList, state.currentIndex]
+    [loadImage, preloadImages, calculateFitZoomForSize, state.imageList, state.currentIndex, updateGifPause]
   );
 
   // ---- Tauri native drag-and-drop ----
@@ -673,10 +697,10 @@ function App() {
       const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - CONTEXT_MENU_MIN_HEIGHT - VIEWPORT_MARGIN);
       const x = Math.max(VIEWPORT_MARGIN, Math.min(event.clientX, maxX));
       const y = Math.max(VIEWPORT_MARGIN, Math.min(event.clientY, maxY));
-      const submenuDirection =
-        x + CONTEXT_MENU_WIDTH + CONTEXT_SUBMENU_WIDTH + VIEWPORT_MARGIN > window.innerWidth
-          ? 'left'
-          : 'right';
+      const canOpenSubmenuRight =
+        x + CONTEXT_MENU_WIDTH + CONTEXT_SUBMENU_WIDTH + VIEWPORT_MARGIN <= window.innerWidth;
+      const canOpenSubmenuLeft = x - CONTEXT_SUBMENU_WIDTH - VIEWPORT_MARGIN >= 0;
+      const submenuDirection = canOpenSubmenuRight ? 'right' : canOpenSubmenuLeft ? 'left' : 'stacked';
 
       setContextMenu({ x, y, submenuDirection });
     },
@@ -787,6 +811,137 @@ function App() {
     state.currentFilePath,
     state.currentIndex,
     state.imageList,
+  ]);
+
+  const handleSaveAs = useCallback(async () => {
+    closeContextMenu();
+
+    if (!state.currentFilePath || state.isLoading || state.errorMessage) return;
+    if (isSavingRef.current) {
+      showToast('저장이 이미 진행 중입니다.');
+      return;
+    }
+
+    const filePathAtStart = state.currentFilePath;
+    const ext = state.originalExtension?.toLowerCase() ?? null;
+    const filters = ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : undefined;
+
+    let target: string | null;
+    try {
+      target = await saveDialog({
+        defaultPath: filePathAtStart,
+        filters,
+      });
+    } catch {
+      showToast('저장 창을 열 수 없습니다.');
+      return;
+    }
+
+    if (typeof target !== 'string') return;
+
+    isSavingRef.current = true;
+    try {
+      await invoke<string>('save_image_as', {
+        filePath: filePathAtStart,
+        targetPath: target,
+      });
+      showToast('저장했습니다.');
+    } catch (error) {
+      console.warn('Failed to save image:', error);
+      showToast(getCommandErrorToast(error, '파일을 저장할 수 없습니다.'));
+    } finally {
+      isSavingRef.current = false;
+    }
+  }, [
+    closeContextMenu,
+    getCommandErrorToast,
+    showToast,
+    state.currentFilePath,
+    state.errorMessage,
+    state.isLoading,
+    state.originalExtension,
+  ]);
+
+  const handleMoveToTrash = useCallback(async () => {
+    closeContextMenu();
+    if (!state.currentFilePath || isTrashingRef.current || isMovingRef.current) {
+      if (isTrashingRef.current) showToast('휴지통 이동이 이미 진행 중입니다.');
+      if (isMovingRef.current) showToast('파일 이동이 이미 진행 중입니다.');
+      return;
+    }
+
+    const previousState = state;
+    const previousGifPause = gifPauseRef.current;
+    const filePathAtStart = state.currentFilePath;
+    const fileNameAtStart = state.fileName || filePathAtStart.split(/[\\/]/).pop() || '파일';
+    const trashRequestId = ++requestIdRef.current;
+
+    isTrashingRef.current = true;
+    updateGifPause(null);
+    gifClickSequenceRef.current = null;
+
+    setState((prev) => ({
+      ...prev,
+      currentFilePath: null,
+      imageSrc: null,
+      isLoading: true,
+      errorMessage: null,
+    }));
+
+    await waitForNextFrame();
+
+    try {
+      await invoke('move_file_to_trash', { filePath: filePathAtStart });
+      if (requestIdRef.current !== trashRequestId) return;
+
+      const nextList = previousState.imageList.filter(
+        (path) => path.toLowerCase() !== filePathAtStart.toLowerCase()
+      );
+
+      if (nextList.length === 0) {
+        requestIdRef.current += 1;
+        setState((prev) => ({
+          ...prev,
+          currentFilePath: null,
+          imageList: [],
+          currentIndex: -1,
+          zoom: 1,
+          rotation: 0,
+          fitMode: 'auto',
+          panOffset: { x: 0, y: 0 },
+          naturalSize: { width: 0, height: 0 },
+          isLoading: false,
+          errorMessage: null,
+          imageSrc: null,
+          fileName: '',
+          fileSize: 0,
+          originalExtension: null,
+        }));
+        showToast(`${fileNameAtStart}을(를) 휴지통으로 이동했습니다.`);
+        return;
+      }
+
+      const removedIndex = Math.max(0, previousState.currentIndex);
+      const nextIndex = Math.min(removedIndex, nextList.length - 1);
+      await openImage(nextList[nextIndex], nextList, nextIndex);
+      showToast(`${fileNameAtStart}을(를) 휴지통으로 이동했습니다.`);
+    } catch (error) {
+      console.warn('Failed to move file to trash:', error);
+      if (requestIdRef.current === trashRequestId) {
+        setState(previousState);
+        updateGifPause(previousGifPause);
+      }
+      showToast(getCommandErrorToast(error, '휴지통으로 이동할 수 없습니다.'));
+    } finally {
+      isTrashingRef.current = false;
+    }
+  }, [
+    closeContextMenu,
+    getCommandErrorToast,
+    openImage,
+    showToast,
+    state,
+    updateGifPause,
   ]);
 
   const handleOpenCustomApp = useCallback(
@@ -950,6 +1105,7 @@ function App() {
       const mode = getDragMode(e.altKey);
       dragModeRef.current = mode;
       isDraggingRef.current = true;
+      hasDraggedRef.current = false;
       dragStartRef.current = { x: e.clientX, y: e.clientY };
       panStartRef.current = { ...state.panOffset };
 
@@ -974,6 +1130,9 @@ function App() {
 
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        hasDraggedRef.current = true;
+      }
 
       const viewport = getViewportSize();
       const rendered = getRenderedSize(
@@ -1026,10 +1185,81 @@ function App() {
     }
   }, []);
 
+  const handleImageClick = useCallback(
+    (event: React.MouseEvent<HTMLImageElement>) => {
+      if (
+        !state.currentFilePath ||
+        !state.imageSrc ||
+        state.originalExtension?.toLowerCase() !== 'gif' ||
+        hasDraggedRef.current
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const currentFilePath = state.currentFilePath;
+      if (event.detail === 1 || gifClickSequenceRef.current?.filePath !== currentFilePath) {
+        gifClickSequenceRef.current = {
+          filePath: currentFilePath,
+          initialPause: gifPauseRef.current,
+          count: 0,
+        };
+      }
+      gifClickSequenceRef.current.count += 1;
+
+      const currentPause = gifPauseRef.current;
+      if (currentPause?.filePath === currentFilePath) {
+        updateGifPause(null);
+        return;
+      }
+
+      const imageElement = viewerImageRef.current;
+      if (!imageElement || imageElement.naturalWidth <= 0 || imageElement.naturalHeight <= 0) {
+        showToast('이 GIF는 일시정지할 수 없습니다.');
+        return;
+      }
+
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = imageElement.naturalWidth;
+        canvas.height = imageElement.naturalHeight;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          showToast('이 GIF는 일시정지할 수 없습니다.');
+          return;
+        }
+
+        context.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
+        updateGifPause({
+          filePath: currentFilePath,
+          pausedSrc: canvas.toDataURL('image/png'),
+        });
+      } catch (error) {
+        console.warn('Failed to pause GIF:', error);
+        showToast('이 GIF는 일시정지할 수 없습니다.');
+      }
+    },
+    [
+      showToast,
+      state.currentFilePath,
+      state.imageSrc,
+      state.originalExtension,
+      updateGifPause,
+    ]
+  );
+
   const handleImageDoubleClick = useCallback(
     async (event: React.MouseEvent<HTMLImageElement>) => {
       event.preventDefault();
       event.stopPropagation();
+
+      const gifClickSequence = gifClickSequenceRef.current;
+      if (gifClickSequence?.filePath === state.currentFilePath) {
+        updateGifPause(gifClickSequence.initialPause);
+        gifClickSequenceRef.current = null;
+      }
 
       if (isFullscreenProcessingRef.current || !state.imageSrc) return;
       isFullscreenProcessingRef.current = true;
@@ -1099,6 +1329,7 @@ function App() {
       state.panOffset,
       state.rotation,
       state.zoom,
+      updateGifPause,
     ]
   );
 
@@ -1149,6 +1380,12 @@ function App() {
     },
     onMoveFile: () => {
       void handleMoveFile();
+    },
+    onMoveToTrash: () => {
+      void handleMoveToTrash();
+    },
+    onSaveAs: () => {
+      void handleSaveAs();
     },
     isEnabled: () => !contextMenu && !registrationDraft && !removeTarget,
   });
@@ -1416,17 +1653,21 @@ function App() {
       rotate(${state.rotation}deg)
       scale(${state.zoom})
     `;
+    const displaySrc =
+      gifPause?.filePath === state.currentFilePath ? gifPause.pausedSrc : state.imageSrc;
 
     return (
       <img
         ref={viewerImageRef}
-        src={state.imageSrc}
+        src={displaySrc}
         alt={state.fileName}
         className="viewer-image"
+        crossOrigin="anonymous"
         style={{
           transform,
           transformOrigin: 'center center',
         }}
+        onClick={handleImageClick}
         onDoubleClick={handleImageDoubleClick}
         draggable={false}
       />
@@ -1511,6 +1752,8 @@ function App() {
           onReveal={handleRevealInExplorer}
           onOpenDefault={handleOpenDefaultApp}
           onMoveFile={handleMoveFile}
+          onSaveAs={handleSaveAs}
+          onMoveToTrash={handleMoveToTrash}
           onOpenCustom={handleOpenCustomApp}
           onRegisterApp={handleRegisterCustomApp}
           onRequestRemoveApp={handleRequestRemoveCustomApp}

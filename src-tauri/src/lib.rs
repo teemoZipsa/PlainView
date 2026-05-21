@@ -538,6 +538,88 @@ fn io_error_to_command(kind: &str, err: std::io::Error) -> CommandError {
     command_error(kind, err.to_string())
 }
 
+#[cfg(windows)]
+fn normalize_windows_error_code(code: i32) -> u32 {
+    let code = code as u32;
+    if code & 0xFFFF_0000 == 0x8007_0000 {
+        code & 0xFFFF
+    } else {
+        code
+    }
+}
+
+fn trash_os_error_is_not_found(code: i32) -> bool {
+    #[cfg(windows)]
+    {
+        let code = normalize_windows_error_code(code);
+        return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = code;
+        false
+    }
+}
+
+fn trash_os_error_is_access_denied(code: i32) -> bool {
+    #[cfg(windows)]
+    {
+        return normalize_windows_error_code(code) == ERROR_ACCESS_DENIED;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = code;
+        false
+    }
+}
+
+fn trash_error_to_command(err: trash::Error) -> CommandError {
+    match &err {
+        trash::Error::Os { code, .. } if trash_os_error_is_not_found(*code) => {
+            command_error("file_not_found", "파일을 찾을 수 없습니다.")
+        }
+        trash::Error::Os { code, .. } if trash_os_error_is_access_denied(*code) => command_error(
+            "access_denied",
+            "권한이 없어 휴지통으로 이동할 수 없습니다.",
+        ),
+        trash::Error::CouldNotAccess { .. } => command_error(
+            "access_denied",
+            "권한이 없어 휴지통으로 이동할 수 없습니다.",
+        ),
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        trash::Error::FileSystem { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            command_error("file_not_found", "파일을 찾을 수 없습니다.")
+        }
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        trash::Error::FileSystem { source, .. }
+            if source.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            command_error(
+                "access_denied",
+                "권한이 없어 휴지통으로 이동할 수 없습니다.",
+            )
+        }
+        _ => command_error(
+            "trash_failed",
+            format!("휴지통으로 이동할 수 없습니다: {}", err),
+        ),
+    }
+}
+
 fn unique_target_path(target_folder: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
     let initial = target_folder.join(file_name);
     if !initial.exists() {
@@ -638,6 +720,61 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
 }
 
 #[tauri::command]
+fn save_image_as(file_path: String, target_path: String) -> Result<String, CommandError> {
+    let source = PathBuf::from(&file_path);
+    if !source.is_file() {
+        return Err(command_error("file_not_found", "파일을 찾을 수 없습니다."));
+    }
+
+    let target = PathBuf::from(&target_path);
+    let target_parent = target
+        .parent()
+        .ok_or_else(|| command_error("target_not_folder", "저장할 폴더를 찾을 수 없습니다."))?;
+    if !target_parent.is_dir() {
+        return Err(command_error(
+            "target_not_folder",
+            "저장할 폴더를 찾을 수 없습니다.",
+        ));
+    }
+
+    // Guard against copying a file onto itself, which would truncate it to 0 bytes.
+    let source_canonical =
+        fs::canonicalize(&source).map_err(|e| io_error_to_command("unknown", e))?;
+    if target.exists() {
+        let target_canonical =
+            fs::canonicalize(&target).map_err(|e| io_error_to_command("unknown", e))?;
+        if source_canonical == target_canonical {
+            return path_to_string(&target);
+        }
+    }
+
+    let copied = fs::copy(&source, &target).map_err(|e| io_error_to_command("save_failed", e))?;
+    let source_len = fs::metadata(&source)
+        .map_err(|e| io_error_to_command("save_failed", e))?
+        .len();
+
+    if copied != source_len {
+        let _ = fs::remove_file(&target);
+        return Err(command_error(
+            "save_failed",
+            "저장한 파일 크기가 원본과 다릅니다.",
+        ));
+    }
+
+    path_to_string(&target)
+}
+
+#[tauri::command]
+fn move_file_to_trash(file_path: String) -> Result<(), CommandError> {
+    let source = PathBuf::from(&file_path);
+    if !source.is_file() {
+        return Err(command_error("file_not_found", "파일을 찾을 수 없습니다."));
+    }
+
+    trash::delete(&source).map_err(trash_error_to_command)
+}
+
+#[tauri::command]
 fn open_with_custom_app(file_path: String, executable_path: String) -> Result<(), String> {
     let file = PathBuf::from(&file_path);
     if !file.is_file() {
@@ -722,6 +859,8 @@ pub fn run() {
             resize_window,
             open_with_default_app,
             move_file_to_folder,
+            save_image_as,
+            move_file_to_trash,
             open_with_custom_app,
             print_file,
             get_cli_args,

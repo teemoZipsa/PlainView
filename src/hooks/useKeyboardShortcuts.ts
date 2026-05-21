@@ -13,6 +13,8 @@ interface KeyboardShortcutsProps {
   canCopyImage: () => boolean;
   onCopyImage: () => void;
   onMoveFile: () => void;
+  onMoveToTrash: () => void;
+  onSaveAs: () => void;
   isEnabled?: () => boolean;
 }
 
@@ -38,6 +40,15 @@ function isCopyShortcut(e: KeyboardEvent): boolean {
 function isMoveShortcut(e: KeyboardEvent): boolean {
   return (
     e.key.toLowerCase() === 'm' &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  );
+}
+
+function isSaveShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 's' &&
     (e.ctrlKey || e.metaKey) &&
     !e.altKey &&
     !e.shiftKey
@@ -77,6 +88,12 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         return;
       }
 
+      if (isSaveShortcut(e)) {
+        e.preventDefault();
+        p.onSaveAs();
+        return;
+      }
+
       switch (e.key) {
         case 'Escape':
           e.preventDefault();
@@ -86,6 +103,10 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         case 'Backspace':
           e.preventDefault();
           p.onPrevImage();
+          break;
+        case 'Delete':
+          e.preventDefault();
+          p.onMoveToTrash();
           break;
         case 'ArrowRight':
         case ' ': // Space

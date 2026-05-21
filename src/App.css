@@ -184,7 +184,7 @@ html, body, #root {
 .context-menu,
 .context-submenu {
   position: absolute;
-  width: 240px;
+  width: min(240px, calc(100vw - 16px));
   padding: 6px;
   color: var(--text-primary);
   background-color: var(--surface-panel);
@@ -204,6 +204,7 @@ html, body, #root {
 .context-submenu {
   display: none;
   top: -6px;
+  z-index: 2;
 }
 
 .context-submenu.right {
@@ -214,12 +215,46 @@ html, body, #root {
   right: calc(100% + 6px);
 }
 
+.context-submenu.stacked {
+  position: static;
+  width: 100%;
+  flex-basis: 100%;
+  margin-top: 5px;
+  box-shadow: none;
+}
+
 .context-submenu.nested {
   top: -6px;
 }
 
 .context-menu-parent {
   position: relative;
+  flex-wrap: wrap;
+}
+
+.context-menu-parent::after {
+  content: '';
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  display: none;
+  width: 12px;
+  z-index: 1;
+}
+
+.context-menu-parent.submenu-right::after {
+  left: 100%;
+}
+
+.context-menu-parent.submenu-left::after {
+  right: 100%;
+}
+
+.context-menu-parent.submenu-right:hover::after,
+.context-menu-parent.submenu-right:focus-within::after,
+.context-menu-parent.submenu-left:hover::after,
+.context-menu-parent.submenu-left:focus-within::after {
+  display: block;
 }
 
 .context-menu-parent:hover > .context-submenu,
