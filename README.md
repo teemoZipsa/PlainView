@@ -1,92 +1,91 @@
 # PlainView
 
-광고 없는 초경량 이미지 뷰어 for Windows
+A lightweight, ad-free image viewer for Windows.
 
-> 이미지를 열면 화면에는 이미지 자체만 보인다.
-> 마우스를 올렸을 때만 최소 조작 버튼이 나타난다.
+> Open an image and see only the image.
+> Move the mouse to reveal the minimal overlay controls.
 
-## 지원 포맷
+## Supported Formats
 
 JPG, JPEG, PNG, WebP, GIF, BMP, TIF, TIFF, ICO, AVIF, JXL, PSD, TGA, PBM, PGM, PNM, PPM, PAM, DDS
 
-PAM은 표준 tuple type 중심으로 지원합니다.
-DDS는 DXT1/BC1, DXT3/BC2, DXT5/BC3 계열 중심으로 지원하며,
-BC4, BC5, BC6H, BC7, 기타 DXGI variant, 일반 uncompressed DDS는 지원하지 않습니다.
+PAM support focuses on standard tuple types.
+DDS support focuses on DXT1/BC1, DXT3/BC2, and DXT5/BC3 families.
+BC4, BC5, BC6H, BC7, other DXGI variants, and general uncompressed DDS files are not supported.
 
-HEIC, HEIF, RAW, CR2, NEF, ARW 파일은 현재 버전에서 확장자 인식만 지원하며,
-열기 시 명확한 미지원 오류를 표시합니다.
+HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current version shows a clear unsupported-format error when opening them.
 
-## 키보드 단축키
+## Keyboard Shortcuts
 
-| 키 | 기능 |
+| Key | Action |
 |---|---|
-| `Esc` | 닫기 |
-| `←` / `Backspace` | 이전 이미지 |
-| `→` / `Space` | 다음 이미지 |
-| `+` | 확대 |
-| `-` | 축소 |
-| `0` | 원본 크기 |
-| `F` | 화면 맞춤 |
-| `T` | 항상 위 고정 |
-| `R` | 시계 방향 90° 회전 |
-| `Ctrl+C` | 이미지 복사 |
-| `Ctrl+S` | 다른 이름으로 저장 |
-| `Ctrl+M` | 다른 폴더로 이동 |
-| `Delete` | 휴지통으로 이동 |
+| `Esc` | Close |
+| `Left Arrow` / `Backspace` | Previous image |
+| `Right Arrow` / `Space` | Next image |
+| `+` | Zoom in |
+| `-` | Zoom out |
+| `0` | Original size |
+| `F` | Fit to screen |
+| `T` | Toggle always on top |
+| `R` | Rotate 90 degrees clockwise |
+| `Ctrl+C` | Copy image |
+| `Ctrl+S` | Save as |
+| `Ctrl+M` | Move to another folder |
+| `Delete` | Move to Recycle Bin |
 
-## 주요 기능
+## Features
 
-- **테두리 없는 창** — 이미지만 보이는 미니멀 UI
-- **마우스 오버 오버레이** — 필요할 때만 반투명 조작 버튼 표시 (2초 후 자동 숨김)
-- **폴더 내 탐색** — 같은 폴더 이미지를 자동으로 목록화, 이전/다음 이동
-- **확대/축소** — 마우스 휠, 키보드, 버튼으로 확대/축소
-- **이미지 패닝** — 확대 시 드래그로 이미지 이동
-- **전체화면** — 이미지를 더블클릭하면 화면 맞춤 전체화면으로 전환, 다시 더블클릭하면 이전 배율로 복귀
-- **창 이동** — 기본 상태는 이미지 영역 드래그, 확대 상태는 상단 핸들 또는 Alt+드래그로 창 이동
-- **우클릭 메뉴** — 탐색기에서 보기, 기본 앱으로 열기, 다른 이름으로 저장, 사용자 정의 앱 등록/열기, 휴지통으로 이동, 인쇄
-- **이미지 복사** — `Ctrl+C` 또는 우클릭 메뉴로 현재 이미지를 클립보드에 복사
-- **다른 이름으로 저장** — `Ctrl+S` 또는 우클릭 메뉴로 현재 이미지의 원본 파일을 저장
-- **빠른 파일 이동** — 우클릭 메뉴 또는 `Ctrl+M`으로 현재 이미지를 다른 폴더로 이동
-- **휴지통 이동** — 우클릭 메뉴 또는 `Delete`로 현재 이미지를 휴지통으로 이동
-- **GIF 일시정지** — GIF 이미지를 클릭해 현재 프레임에서 멈추고 다시 클릭해 재생
-- **이미지 정보 확인** — 하단 정보바에 마우스를 올리면 경로, 해상도, 파일 크기, 확장자 표시
-- **항상 위 고정** — 다른 창 위에 이미지를 띄워놓기
-- **회전 / 직접 배율 입력** — 보기 전용 90도 회전, 하단 배율 클릭 후 숫자 입력
-- **드래그 앤 드롭** — 이미지 파일을 끌어다 놓으면 열기
-- **설정 저장** — 창 위치, 항상 위 고정 상태 등 자동 저장
+- **Borderless window** - a minimal UI that keeps the image as the main surface
+- **Hover overlay** - translucent controls appear only when needed and auto-hide after 2 seconds
+- **Folder navigation** - automatically lists images in the same folder for previous/next navigation
+- **Zoom controls** - zoom with the mouse wheel, keyboard, or buttons
+- **Image panning** - drag to pan while zoomed in
+- **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
+- **Window dragging** - drag the image area in default mode, or use the top handle / Alt-drag while zoomed
+- **Context menu** - show in Explorer, open with default app, save as, register/open custom apps, move to Recycle Bin, print
+- **Image copy** - copy the current image to the clipboard with `Ctrl+C` or the context menu
+- **Save as** - save the original image file with `Ctrl+S` or the context menu
+- **Quick file move** - move the current image to another folder with the context menu or `Ctrl+M`
+- **Recycle Bin support** - move the current image to the Recycle Bin with the context menu or `Delete`
+- **GIF pause** - click a GIF to pause on the current frame, then click again to resume
+- **Image info** - hover the bottom info bar to see path, dimensions, file size, and extension
+- **Always on top** - keep the image above other windows
+- **Rotation and direct zoom input** - view-only 90-degree rotation and numeric zoom entry from the bottom scale label
+- **Drag and drop** - open an image by dropping it into the window
+- **Settings persistence** - automatically saves window position, always-on-top state, and related settings
 
-## 기술 스택
+## Tech Stack
 
-- [Tauri v2](https://tauri.app/) — 경량 데스크톱 앱 프레임워크
+- [Tauri v2](https://tauri.app/) - lightweight desktop app framework
 - [React 19](https://react.dev/) + TypeScript
-- [Vite](https://vite.dev/) — 프론트엔드 빌드
+- [Vite](https://vite.dev/) - frontend build tooling
 
-## 개발 환경
+## Development Environment
 
-```
+```text
 Rust 1.94+, Node.js 20+, npm 10+
 ```
 
-## 실행 방법
+## Running Locally
 
 ```bash
-# 의존성 설치
+# Install dependencies
 npm install
 
-# 개발 모드 실행
+# Run in development mode
 npm run tauri dev
 
-# 프로덕션 빌드
+# Build for production
 npm run tauri build
 ```
 
-## 현재 제한사항
+## Current Limitations
 
-- 파일 확장자 연결은 설치 후 수동 설정 필요 (Windows 기본 앱 설정)
-- 이미지 편집 기능 없음 (보기 전용)
-- GIF는 클릭 일시정지/재생만 지원하며, 프레임 단위 탐색은 지원하지 않음
-- 이미지는 base64로 로딩 (LRU 캐시 5장 제한)
+- File association must be configured manually after installation through Windows default app settings.
+- PlainView is view-only and does not include image editing tools.
+- GIF support is limited to click-to-pause and click-to-resume. Frame-by-frame navigation is not supported.
+- Images are loaded as base64 with a 5-image LRU cache.
 
-## 라이선스
+## License
 
 MIT
