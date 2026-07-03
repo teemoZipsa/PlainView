@@ -135,7 +135,7 @@ fn command_error(kind: &str, message: impl Into<String>) -> CommandError {
 fn path_to_string(path: &Path) -> Result<String, CommandError> {
     path.to_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| command_error("unknown", "경로를 문자열로 변환할 수 없습니다."))
+        .ok_or_else(|| command_error("unknown", "Could not convert the path to a string."))
 }
 
 #[cfg(windows)]
@@ -146,13 +146,13 @@ fn to_wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
 #[cfg(windows)]
 fn shell_error_from_code(code: u32) -> CommandError {
     match code {
-        ERROR_FILE_NOT_FOUND => command_error("file_not_found", "파일을 찾을 수 없습니다."),
-        ERROR_PATH_NOT_FOUND => command_error("file_not_found", "파일 경로를 찾을 수 없습니다."),
-        ERROR_ACCESS_DENIED => command_error("access_denied", "권한이 없어 파일을 열 수 없습니다."),
-        ERROR_NO_ASSOCIATION => command_error("no_association", "연결된 기본 앱이 없습니다."),
+        ERROR_FILE_NOT_FOUND => command_error("file_not_found", "File not found."),
+        ERROR_PATH_NOT_FOUND => command_error("file_not_found", "File path not found."),
+        ERROR_ACCESS_DENIED => command_error("access_denied", "Permission denied."),
+        ERROR_NO_ASSOCIATION => command_error("no_association", "No default app is associated."),
         _ => command_error(
             "open_failed",
-            format!("기본 앱을 실행할 수 없습니다. 오류 코드: {}", code),
+            format!("Could not launch the default app. Error code: {}", code),
         ),
     }
 }
@@ -196,7 +196,7 @@ fn open_with_shell_execute(path: &Path) -> Result<(), CommandError> {
 fn open_with_shell_execute(_path: &Path) -> Result<(), CommandError> {
     Err(command_error(
         "open_failed",
-        "이 플랫폼에서는 기본 앱 fallback을 지원하지 않습니다.",
+        "Default app fallback is not supported on this platform.",
     ))
 }
 
@@ -234,16 +234,16 @@ fn get_mime_type(ext: &str) -> &'static str {
     }
 }
 
-fn unsupported_format_message(ext: &str) -> String {
+fn unsupported_format_error(ext: &str) -> CommandError {
     if UNSUPPORTED_HEIC_EXTENSIONS.contains(&ext) {
-        return "HEIC/HEIF 형식은 현재 버전에서는 지원하지 않습니다.".to_string();
+        return command_error("unsupported_heic", "HEIC/HEIF files are not supported.");
     }
 
     if UNSUPPORTED_RAW_EXTENSIONS.contains(&ext) {
-        return "RAW 카메라 형식은 현재 버전에서는 지원하지 않습니다.".to_string();
+        return command_error("unsupported_raw", "RAW camera files are not supported.");
     }
 
-    "지원하지 않는 파일 형식입니다.".to_string()
+    command_error("unsupported_format", "Unsupported file format.")
 }
 
 /// Check if a file has a supported image extension
@@ -254,12 +254,12 @@ fn is_supported_image(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn encode_png(image: DynamicImage) -> Result<DecodedImage, String> {
+fn encode_png(image: DynamicImage) -> Result<DecodedImage, CommandError> {
     let (width, height) = image.dimensions();
     let mut cursor = Cursor::new(Vec::new());
     image
         .write_to(&mut cursor, ImageFormat::Png)
-        .map_err(|e| format!("이미지를 PNG로 변환할 수 없습니다: {}", e))?;
+        .map_err(|e| command_error("decode_failed", format!("Could not encode PNG: {}", e)))?;
 
     Ok(DecodedImage {
         data: cursor.into_inner(),
@@ -269,15 +269,15 @@ fn encode_png(image: DynamicImage) -> Result<DecodedImage, String> {
     })
 }
 
-fn catch_decode<F>(format_name: &str, decode: F) -> Result<DecodedImage, String>
+fn catch_decode<F>(format_name: &str, decode: F) -> Result<DecodedImage, CommandError>
 where
-    F: FnOnce() -> Result<DecodedImage, String> + UnwindSafe,
+    F: FnOnce() -> Result<DecodedImage, CommandError> + UnwindSafe,
 {
     match catch_unwind(decode) {
         Ok(result) => result,
-        Err(_) => Err(format!(
-            "{} 디코딩 중 내부 오류가 발생했습니다.",
-            format_name
+        Err(_) => Err(command_error(
+            "decode_failed",
+            format!("Internal error while decoding {}.", format_name),
         )),
     }
 }
@@ -292,81 +292,92 @@ fn decode_with_image_crate(
     data: &[u8],
     format: ImageFormat,
     format_name: &str,
-) -> Result<DecodedImage, String> {
+) -> Result<DecodedImage, CommandError> {
     catch_decode(format_name, || {
         let mut reader = ImageReader::with_format(Cursor::new(data), format);
         reader.limits(image_limits());
 
-        let image = reader
-            .decode()
-            .map_err(|e| format!("{} 파일을 디코딩할 수 없습니다: {}", format_name, e))?;
+        let image = reader.decode().map_err(|e| {
+            command_error(
+                "decode_failed",
+                format!("Could not decode {}: {}", format_name, e),
+            )
+        })?;
 
         encode_png(image)
     })
 }
 
-fn decode_jxl(path: &Path) -> Result<DecodedImage, String> {
+fn decode_jxl(path: &Path) -> Result<DecodedImage, CommandError> {
     catch_decode("JPEG XL", || {
-        let file = fs::File::open(path).map_err(|e| format!("JXL 파일을 열 수 없습니다: {}", e))?;
+        let file = fs::File::open(path)
+            .map_err(|e| command_error("read_failed", format!("Could not open JXL: {}", e)))?;
         let mut decoder = jxl_oxide::integration::JxlDecoder::new(file)
-            .map_err(|e| format!("JXL 파일을 디코딩할 수 없습니다: {}", e))?;
-        decoder
-            .set_limits(image_limits())
-            .map_err(|e| format!("JXL 디코딩 제한을 설정할 수 없습니다: {}", e))?;
+            .map_err(|e| command_error("decode_failed", format!("Could not decode JXL: {}", e)))?;
+        decoder.set_limits(image_limits()).map_err(|e| {
+            command_error("decode_failed", format!("Could not set JXL limits: {}", e))
+        })?;
 
         let image = DynamicImage::from_decoder(decoder)
-            .map_err(|e| format!("JXL 파일을 디코딩할 수 없습니다: {}", e))?;
+            .map_err(|e| command_error("decode_failed", format!("Could not decode JXL: {}", e)))?;
 
         encode_png(image)
     })
 }
 
-fn decode_psd(data: &[u8]) -> Result<DecodedImage, String> {
+fn decode_psd(data: &[u8]) -> Result<DecodedImage, CommandError> {
     catch_decode("PSD", || {
         let psd = psd::Psd::from_bytes(data)
-            .map_err(|e| format!("PSD 파일을 디코딩할 수 없습니다: {}", e))?;
+            .map_err(|e| command_error("decode_failed", format!("Could not decode PSD: {}", e)))?;
         let width = psd.width();
         let height = psd.height();
         let decoded_bytes = u64::from(width)
             .checked_mul(u64::from(height))
             .and_then(|pixels| pixels.checked_mul(4))
-            .ok_or_else(|| "PSD 이미지 크기가 너무 큽니다.".to_string())?;
+            .ok_or_else(|| command_error("image_too_large", "PSD image is too large."))?;
 
         if decoded_bytes > MAX_DECODED_BYTES {
-            return Err("PSD 이미지가 너무 커서 표시할 수 없습니다.".to_string());
+            return Err(command_error(
+                "image_too_large",
+                "PSD image is too large to display.",
+            ));
         }
 
         let rgba = psd.rgba();
         let image = ImageBuffer::from_raw(width, height, rgba)
             .map(DynamicImage::ImageRgba8)
-            .ok_or_else(|| "PSD 픽셀 데이터를 이미지로 변환할 수 없습니다.".to_string())?;
+            .ok_or_else(|| command_error("decode_failed", "Could not convert PSD pixels."))?;
 
         encode_png(image)
     })
 }
 
-fn decode_dds(data: &[u8]) -> Result<DecodedImage, String> {
+fn decode_dds(data: &[u8]) -> Result<DecodedImage, CommandError> {
     catch_decode("DDS", || {
         let decoder = DdsDecoder::new(Cursor::new(data))
-            .map_err(|e| format!("DDS 파일을 디코딩할 수 없습니다: {}", e))?;
+            .map_err(|e| command_error("decode_failed", format!("Could not decode DDS: {}", e)))?;
 
         if decoder.total_bytes() > MAX_DECODED_BYTES {
-            return Err("DDS 이미지가 너무 커서 표시할 수 없습니다.".to_string());
+            return Err(command_error(
+                "image_too_large",
+                "DDS image is too large to display.",
+            ));
         }
 
         let image = DynamicImage::from_decoder(decoder)
-            .map_err(|e| format!("DDS 파일을 디코딩할 수 없습니다: {}", e))?;
+            .map_err(|e| command_error("decode_failed", format!("Could not decode DDS: {}", e)))?;
 
         encode_png(image)
     })
 }
 
-fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, String> {
+fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, CommandError> {
     if UNSUPPORTED_HEIC_EXTENSIONS.contains(&ext) || UNSUPPORTED_RAW_EXTENSIONS.contains(&ext) {
-        return Err(unsupported_format_message(ext));
+        return Err(unsupported_format_error(ext));
     }
 
-    let data = fs::read(path).map_err(|e| format!("파일을 읽을 수 없습니다: {}", e))?;
+    let data = fs::read(path)
+        .map_err(|e| command_error("read_failed", format!("Could not read the file: {}", e)))?;
 
     match ext {
         "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif" | "avif" => Ok(DecodedImage {
@@ -384,21 +395,24 @@ fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, String> {
         "dds" => decode_dds(&data),
         "jxl" => decode_jxl(path),
         "psd" => decode_psd(&data),
-        _ => Err(unsupported_format_message(ext)),
+        _ => Err(unsupported_format_error(ext)),
     }
 }
 
 /// Read an image file and return base64 encoded data
 #[tauri::command]
-fn read_image(path: String) -> Result<ImageData, String> {
+fn read_image(path: String) -> Result<ImageData, CommandError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
-        return Err("파일을 찾을 수 없습니다.".to_string());
+        return Err(command_error("file_not_found", "File not found."));
     }
 
     if !is_supported_image(&file_path) {
-        return Err("지원하지 않는 파일 형식입니다.".to_string());
+        return Err(command_error(
+            "unsupported_format",
+            "Unsupported file format.",
+        ));
     }
 
     let ext = file_path
@@ -418,7 +432,12 @@ fn read_image(path: String) -> Result<ImageData, String> {
         .map(|e| e.to_lowercase());
 
     let file_size = fs::metadata(&file_path)
-        .map_err(|e| format!("파일 정보를 읽을 수 없습니다: {}", e))?
+        .map_err(|e| {
+            command_error(
+                "metadata_failed",
+                format!("Could not read file info: {}", e),
+            )
+        })?
         .len();
     let decoded = decode_image(&file_path, &ext)?;
     let base64_str = general_purpose::STANDARD.encode(&decoded.data);
@@ -437,16 +456,24 @@ fn read_image(path: String) -> Result<ImageData, String> {
 
 /// Scan a folder for supported image files, sorted by filename ascending
 #[tauri::command]
-fn scan_folder_images(folder_path: String) -> Result<Vec<String>, String> {
+fn scan_folder_images(folder_path: String) -> Result<Vec<String>, CommandError> {
     let dir = PathBuf::from(&folder_path);
 
     if !dir.is_dir() {
-        return Err("유효한 폴더가 아닙니다.".to_string());
+        return Err(command_error(
+            "invalid_folder",
+            "This is not a valid folder.",
+        ));
     }
 
     let mut images: Vec<String> = Vec::new();
 
-    let entries = fs::read_dir(&dir).map_err(|e| format!("폴더를 읽을 수 없습니다: {}", e))?;
+    let entries = fs::read_dir(&dir).map_err(|e| {
+        command_error(
+            "folder_read_failed",
+            format!("Could not read folder: {}", e),
+        )
+    })?;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -477,12 +504,12 @@ fn scan_folder_images(folder_path: String) -> Result<Vec<String>, String> {
 
 /// Get the parent folder of a file path
 #[tauri::command]
-fn get_parent_folder(file_path: String) -> Result<String, String> {
+fn get_parent_folder(file_path: String) -> Result<String, CommandError> {
     let path = PathBuf::from(&file_path);
     path.parent()
         .and_then(|p| p.to_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| "상위 폴더를 찾을 수 없습니다.".to_string())
+        .ok_or_else(|| command_error("parent_folder_not_found", "Could not find parent folder."))
 }
 
 /// Load settings from JSON file
@@ -501,38 +528,53 @@ fn load_settings(app: AppHandle) -> Settings {
 
 /// Save settings to JSON file
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
+fn save_settings(app: AppHandle, settings: Settings) -> Result<(), CommandError> {
     let path = get_settings_path(&app);
-    let json =
-        serde_json::to_string_pretty(&settings).map_err(|e| format!("설정 직렬화 오류: {}", e))?;
-    fs::write(&path, json).map_err(|e| format!("설정 저장 오류: {}", e))?;
+    let json = serde_json::to_string_pretty(&settings).map_err(|e| {
+        command_error(
+            "settings_save_failed",
+            format!("Could not serialize settings: {}", e),
+        )
+    })?;
+    fs::write(&path, json).map_err(|e| {
+        command_error(
+            "settings_save_failed",
+            format!("Could not save settings: {}", e),
+        )
+    })?;
     Ok(())
 }
 
 /// Set always-on-top state
 #[tauri::command]
-fn set_always_on_top(window: WebviewWindow, on_top: bool) -> Result<(), String> {
-    window
-        .set_always_on_top(on_top)
-        .map_err(|e| format!("항상 위 고정 설정 오류: {}", e))
+fn set_always_on_top(window: WebviewWindow, on_top: bool) -> Result<(), CommandError> {
+    window.set_always_on_top(on_top).map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not set always-on-top: {}", e),
+        )
+    })
 }
 
 /// Resize the window
 #[tauri::command]
-fn resize_window(window: WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+fn resize_window(window: WebviewWindow, width: f64, height: f64) -> Result<(), CommandError> {
     let size = tauri::LogicalSize::new(width, height);
-    window
-        .set_size(size)
-        .map_err(|e| format!("창 크기 변경 오류: {}", e))
+    window.set_size(size).map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not resize window: {}", e),
+        )
+    })
 }
 
 fn io_error_to_command(kind: &str, err: std::io::Error) -> CommandError {
     if err.kind() == std::io::ErrorKind::NotFound {
-        return command_error("file_not_found", "파일을 찾을 수 없습니다.");
+        return command_error("file_not_found", "File not found.");
     }
 
     if err.kind() == std::io::ErrorKind::PermissionDenied {
-        return command_error("access_denied", "권한이 없어 작업할 수 없습니다.");
+        return command_error("access_denied", "Permission denied.");
     }
 
     command_error(kind, err.to_string())
@@ -578,16 +620,12 @@ fn trash_os_error_is_access_denied(code: i32) -> bool {
 fn trash_error_to_command(err: trash::Error) -> CommandError {
     match &err {
         trash::Error::Os { code, .. } if trash_os_error_is_not_found(*code) => {
-            command_error("file_not_found", "파일을 찾을 수 없습니다.")
+            command_error("file_not_found", "File not found.")
         }
-        trash::Error::Os { code, .. } if trash_os_error_is_access_denied(*code) => command_error(
-            "access_denied",
-            "권한이 없어 휴지통으로 이동할 수 없습니다.",
-        ),
-        trash::Error::CouldNotAccess { .. } => command_error(
-            "access_denied",
-            "권한이 없어 휴지통으로 이동할 수 없습니다.",
-        ),
+        trash::Error::Os { code, .. } if trash_os_error_is_access_denied(*code) => {
+            command_error("access_denied", "Permission denied.")
+        }
+        trash::Error::CouldNotAccess { .. } => command_error("access_denied", "Permission denied."),
         #[cfg(all(
             unix,
             not(target_os = "macos"),
@@ -597,7 +635,7 @@ fn trash_error_to_command(err: trash::Error) -> CommandError {
         trash::Error::FileSystem { source, .. }
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
-            command_error("file_not_found", "파일을 찾을 수 없습니다.")
+            command_error("file_not_found", "File not found.")
         }
         #[cfg(all(
             unix,
@@ -608,14 +646,11 @@ fn trash_error_to_command(err: trash::Error) -> CommandError {
         trash::Error::FileSystem { source, .. }
             if source.kind() == std::io::ErrorKind::PermissionDenied =>
         {
-            command_error(
-                "access_denied",
-                "권한이 없어 휴지통으로 이동할 수 없습니다.",
-            )
+            command_error("access_denied", "Permission denied.")
         }
         _ => command_error(
             "trash_failed",
-            format!("휴지통으로 이동할 수 없습니다: {}", err),
+            format!("Could not move file to trash: {}", err),
         ),
     }
 }
@@ -651,7 +686,7 @@ fn unique_target_path(target_folder: &Path, file_name: &std::ffi::OsStr) -> Path
 fn open_with_default_app(app: AppHandle, path: String) -> Result<(), CommandError> {
     let file = PathBuf::from(&path);
     if !file.is_file() {
-        return Err(command_error("file_not_found", "파일을 찾을 수 없습니다."));
+        return Err(command_error("file_not_found", "File not found."));
     }
 
     let path_string = path_to_string(&file)?;
@@ -666,32 +701,35 @@ fn open_with_default_app(app: AppHandle, path: String) -> Result<(), CommandErro
 fn move_file_to_folder(file_path: String, target_folder: String) -> Result<String, CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
-        return Err(command_error("file_not_found", "파일을 찾을 수 없습니다."));
+        return Err(command_error("file_not_found", "File not found."));
     }
 
     let target_dir = PathBuf::from(&target_folder);
     if !target_dir.is_dir() {
         return Err(command_error(
             "target_not_folder",
-            "이동할 폴더를 찾을 수 없습니다.",
+            "Could not find the target folder.",
         ));
     }
 
     let source_parent = source
         .parent()
-        .ok_or_else(|| command_error("file_not_found", "상위 폴더를 찾을 수 없습니다."))?;
+        .ok_or_else(|| command_error("parent_folder_not_found", "Could not find parent folder."))?;
     let source_parent_canonical =
         fs::canonicalize(source_parent).map_err(|e| io_error_to_command("unknown", e))?;
     let target_dir_canonical =
         fs::canonicalize(&target_dir).map_err(|e| io_error_to_command("target_not_folder", e))?;
 
     if source_parent_canonical == target_dir_canonical {
-        return Err(command_error("same_folder", "이미 같은 폴더에 있습니다."));
+        return Err(command_error(
+            "same_folder",
+            "The file is already in that folder.",
+        ));
     }
 
     let file_name = source
         .file_name()
-        .ok_or_else(|| command_error("file_not_found", "파일 이름을 확인할 수 없습니다."))?;
+        .ok_or_else(|| command_error("file_not_found", "Could not read file name."))?;
     let target = unique_target_path(&target_dir_canonical, file_name);
 
     match fs::rename(&source, &target) {
@@ -707,7 +745,7 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
                 let _ = fs::remove_file(&target);
                 return Err(command_error(
                     "copy_failed",
-                    "복사한 파일 크기가 원본과 다릅니다.",
+                    "Copied file size differs from the original.",
                 ));
             }
 
@@ -723,17 +761,17 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
 fn save_image_as(file_path: String, target_path: String) -> Result<String, CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
-        return Err(command_error("file_not_found", "파일을 찾을 수 없습니다."));
+        return Err(command_error("file_not_found", "File not found."));
     }
 
     let target = PathBuf::from(&target_path);
     let target_parent = target
         .parent()
-        .ok_or_else(|| command_error("target_not_folder", "저장할 폴더를 찾을 수 없습니다."))?;
+        .ok_or_else(|| command_error("target_not_folder", "Could not find the save folder."))?;
     if !target_parent.is_dir() {
         return Err(command_error(
             "target_not_folder",
-            "저장할 폴더를 찾을 수 없습니다.",
+            "Could not find the save folder.",
         ));
     }
 
@@ -757,7 +795,7 @@ fn save_image_as(file_path: String, target_path: String) -> Result<String, Comma
         let _ = fs::remove_file(&target);
         return Err(command_error(
             "save_failed",
-            "저장한 파일 크기가 원본과 다릅니다.",
+            "Saved file size differs from the original.",
         ));
     }
 
@@ -768,37 +806,40 @@ fn save_image_as(file_path: String, target_path: String) -> Result<String, Comma
 fn move_file_to_trash(file_path: String) -> Result<(), CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
-        return Err(command_error("file_not_found", "파일을 찾을 수 없습니다."));
+        return Err(command_error("file_not_found", "File not found."));
     }
 
     trash::delete(&source).map_err(trash_error_to_command)
 }
 
 #[tauri::command]
-fn open_with_custom_app(file_path: String, executable_path: String) -> Result<(), String> {
+fn open_with_custom_app(file_path: String, executable_path: String) -> Result<(), CommandError> {
     let file = PathBuf::from(&file_path);
     if !file.is_file() {
-        return Err("이미지 파일을 찾을 수 없습니다.".to_string());
+        return Err(command_error("file_not_found", "Image file not found."));
     }
 
     let executable = PathBuf::from(&executable_path);
     if !executable.is_file() {
-        return Err("등록된 앱을 찾을 수 없습니다.".to_string());
+        return Err(command_error(
+            "custom_app_not_found",
+            "Registered app not found.",
+        ));
     }
 
     Command::new(&executable)
         .arg(&file)
         .spawn()
-        .map_err(|e| format!("앱을 실행할 수 없습니다: {}", e))?;
+        .map_err(|e| command_error("open_failed", format!("Could not launch the app: {}", e)))?;
 
     Ok(())
 }
 
 #[tauri::command]
-fn print_file(path: String) -> Result<(), String> {
+fn print_file(path: String) -> Result<(), CommandError> {
     let file = PathBuf::from(&path);
     if !file.is_file() {
-        return Err("인쇄할 파일을 찾을 수 없습니다.".to_string());
+        return Err(command_error("file_not_found", "File to print not found."));
     }
 
     #[cfg(windows)]
@@ -817,23 +858,31 @@ fn print_file(path: String) -> Result<(), String> {
             .arg(&file)
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|e| format!("인쇄를 시작할 수 없습니다: {}", e))?;
+            .map_err(|e| {
+                command_error("open_failed", format!("Could not start printing: {}", e))
+            })?;
 
         if output.status.success() {
             Ok(())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             Err(if stderr.is_empty() {
-                "인쇄를 시작할 수 없습니다.".to_string()
+                command_error("open_failed", "Could not start printing.")
             } else {
-                format!("인쇄를 시작할 수 없습니다: {}", stderr)
+                command_error(
+                    "open_failed",
+                    format!("Could not start printing: {}", stderr),
+                )
             })
         }
     }
 
     #[cfg(not(windows))]
     {
-        Err("이 플랫폼에서는 인쇄를 지원하지 않습니다.".to_string())
+        Err(command_error(
+            "print_unsupported",
+            "Printing is not supported on this platform.",
+        ))
     }
 }
 

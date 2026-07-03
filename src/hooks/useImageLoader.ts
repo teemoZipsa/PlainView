@@ -72,7 +72,7 @@ export function useImageLoader() {
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
         });
-        img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
+        img.onerror = () => reject(new Error('image_load_failed'));
         img.src = cached.src;
       });
     }
@@ -108,7 +108,7 @@ export function useImageLoader() {
         };
         img.onerror = () => {
           loadingRef.current = false;
-          reject(new Error('이미지를 불러올 수 없습니다.'));
+          reject(new Error('image_load_failed'));
         };
         img.src = src;
       });

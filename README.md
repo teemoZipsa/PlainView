@@ -2,8 +2,14 @@
 
 A lightweight, ad-free image viewer for Windows.
 
+[한국어 문서](README.ko.md)
+
 > Open an image and see only the image.
 > Move the mouse to reveal the minimal overlay controls.
+
+## Language Support
+
+PlainView supports Korean and English UI text. It uses Korean for Korean system/browser locales and English otherwise. For development checks, append `?lang=ko` or `?lang=en` to the local dev URL, or set `localStorage.plainview.locale` to `ko` or `en`.
 
 ## Supported Formats
 

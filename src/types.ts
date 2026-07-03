@@ -21,6 +21,22 @@ export type CommandErrorKind =
   | 'open_failed'
   | 'trash_failed'
   | 'save_failed'
+  | 'unsupported_format'
+  | 'unsupported_heic'
+  | 'unsupported_raw'
+  | 'decode_failed'
+  | 'image_too_large'
+  | 'read_failed'
+  | 'metadata_failed'
+  | 'invalid_folder'
+  | 'folder_read_failed'
+  | 'parent_folder_not_found'
+  | 'settings_save_failed'
+  | 'window_operation_failed'
+  | 'custom_app_not_found'
+  | 'print_unsupported'
+  | 'image_load_failed'
+  | 'image_size_failed'
   | 'unknown';
 
 export interface CommandError {

@@ -12,6 +12,7 @@ import ErrorView from './components/ErrorView';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
+import { commandErrorKeys, detectLocale, translate, type TranslationKey } from './i18n';
 import type {
   ViewerState,
   Rotation,
@@ -21,7 +22,6 @@ import type {
   FitMode,
   CustomOpenApp,
   CommandError,
-  CommandErrorKind,
 } from './types';
 import './App.css';
 
@@ -96,6 +96,12 @@ function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
   const [gifPause, setGifPause] = useState<GifPauseState | null>(null);
+  const [locale] = useState(detectLocale);
+  const t = useCallback(
+    (key: TranslationKey, values?: Record<string, string | number>) =>
+      translate(locale, key, values),
+    [locale]
+  );
 
   const settingsRef = useRef<Settings>({
     rememberWindowPosition: true,
@@ -141,6 +147,10 @@ function App() {
 
   // ---- Utility functions ----
 
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   const showToast = useCallback((message: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToastMessage(message);
@@ -171,33 +181,36 @@ function App() {
   }, []);
 
   const getCommandErrorToast = useCallback(
-    (error: unknown, fallback: string) => {
-      if (!isCommandError(error)) return fallback;
+    (error: unknown, fallbackKey: TranslationKey) => {
+      if (!isCommandError(error)) return t(fallbackKey);
 
-      const messages: Partial<Record<CommandErrorKind, string>> = {
-        file_not_found: '파일을 찾을 수 없습니다.',
-        target_not_folder: '이동할 폴더를 찾을 수 없습니다.',
-        same_folder: '이미 같은 폴더에 있습니다.',
-        no_association: '연결된 기본 앱이 없습니다.',
-        access_denied: '권한이 없어 작업할 수 없습니다.',
-        already_moving: '파일 이동이 이미 진행 중입니다.',
-        copy_failed: '다른 드라이브로 파일을 복사할 수 없습니다.',
-        remove_original_failed: '복사 후 원본 파일을 삭제할 수 없습니다.',
-        open_failed: '기본 앱으로 열 수 없습니다.',
-        trash_failed: '휴지통으로 이동할 수 없습니다.',
-        save_failed: '파일을 저장할 수 없습니다.',
-        unknown: fallback,
-      };
-
-      return messages[error.kind] ?? error.message ?? fallback;
+      const key = commandErrorKeys[error.kind] ?? fallbackKey;
+      return t(key);
     },
-    [isCommandError]
+    [isCommandError, t]
+  );
+
+  const getErrorMessage = useCallback(
+    (error: unknown, fallbackKey: TranslationKey) => {
+      if (isCommandError(error)) {
+        return t(commandErrorKeys[error.kind] ?? fallbackKey);
+      }
+
+      if (error instanceof Error) {
+        if (error.message === 'image_load_failed') return t('error.imageLoadFailed');
+        if (error.message === 'image_size_failed') return t('error.imageSizeFailed');
+      }
+
+      const message = typeof error === 'string' ? error : '';
+      return message && !/[\uAC00-\uD7A3]/.test(message) ? message : t(fallbackKey);
+    },
+    [isCommandError, t]
   );
 
   const getExecutableDisplayName = useCallback((path: string) => {
-    const fileName = path.split(/[\\/]/).pop() || '앱';
-    return fileName.replace(/\.exe$/i, '') || '앱';
-  }, []);
+    const fileName = path.split(/[\\/]/).pop() || t('app.defaultName');
+    return fileName.replace(/\.exe$/i, '') || t('app.defaultName');
+  }, [t]);
 
   const createCustomAppId = useCallback(() => {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -227,7 +240,7 @@ function App() {
     return new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new window.Image();
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
+      image.onerror = () => reject(new Error('image_load_failed'));
       image.src = src;
     });
   }, []);
@@ -237,7 +250,7 @@ function App() {
     const height = imageElement.naturalHeight;
 
     if (!width || !height) {
-      throw new Error('이미지 크기를 확인할 수 없습니다.');
+      throw new Error('image_size_failed');
     }
 
     const canvas = document.createElement('canvas');
@@ -282,14 +295,14 @@ function App() {
       }
 
       await copyImageElementToClipboard(imageElement);
-      showToast('이미지를 클립보드에 복사했습니다.');
+      showToast(t('toast.copySuccess'));
     } catch (error) {
       console.warn('Failed to copy image:', error);
-      showToast('이미지를 복사할 수 없습니다.');
+      showToast(t('toast.copyFailed'));
     } finally {
       isCopyingRef.current = false;
     }
-  }, [canCopyImage, copyImageElementToClipboard, loadImageElement, showToast, state.imageSrc]);
+  }, [canCopyImage, copyImageElementToClipboard, loadImageElement, showToast, state.imageSrc, t]);
 
   const getViewportSize = useCallback(() => {
     return viewportSize;
@@ -519,15 +532,22 @@ function App() {
         // Stale request guard on error path too
         if (requestIdRef.current !== myRequestId) return;
 
-        const message = err instanceof Error ? err.message : String(err);
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          errorMessage: message || '이미지를 불러올 수 없습니다.',
+          errorMessage: getErrorMessage(err, 'error.imageLoadFailed'),
         }));
       }
     },
-    [loadImage, preloadImages, calculateFitZoomForSize, state.imageList, state.currentIndex, updateGifPause]
+    [
+      getErrorMessage,
+      loadImage,
+      preloadImages,
+      calculateFitZoomForSize,
+      state.imageList,
+      state.currentIndex,
+      updateGifPause,
+    ]
   );
 
   // ---- Tauri native drag-and-drop ----
@@ -714,9 +734,9 @@ function App() {
     try {
       await revealItemInDir(state.currentFilePath);
     } catch {
-      showToast('탐색기에서 파일을 표시할 수 없습니다.');
+      showToast(t('toast.revealFailed'));
     }
-  }, [closeContextMenu, showToast, state.currentFilePath]);
+  }, [closeContextMenu, showToast, state.currentFilePath, t]);
 
   const handleCopyImageFromMenu = useCallback(() => {
     closeContextMenu();
@@ -731,14 +751,14 @@ function App() {
       await invoke('open_with_default_app', { path: state.currentFilePath });
     } catch (error) {
       console.warn('Failed to open with default app:', error);
-      showToast(getCommandErrorToast(error, '기본 앱으로 열 수 없습니다.'));
+      showToast(getCommandErrorToast(error, 'error.openFailed'));
     }
   }, [closeContextMenu, getCommandErrorToast, showToast, state.currentFilePath]);
 
   const handleMoveFile = useCallback(async () => {
     closeContextMenu();
     if (!state.currentFilePath || isMovingRef.current) {
-      if (isMovingRef.current) showToast('파일 이동이 이미 진행 중입니다.');
+      if (isMovingRef.current) showToast(t('toast.moveAlreadyRunning'));
       return;
     }
 
@@ -747,10 +767,10 @@ function App() {
       selected = await openDialog({
         multiple: false,
         directory: true,
-        title: '이동할 폴더 선택',
+        title: t('dialog.moveFolderTitle'),
       });
     } catch {
-      showToast('폴더 선택 창을 열 수 없습니다.');
+      showToast(t('toast.moveDialogFailed'));
       return;
     }
 
@@ -789,17 +809,17 @@ function App() {
           fileSize: 0,
           originalExtension: null,
         }));
-        showToast('파일을 이동했습니다.');
+        showToast(t('toast.moveSuccess'));
         return;
       }
 
       const removedIndex = Math.max(0, state.currentIndex);
       const nextIndex = Math.min(removedIndex, nextList.length - 1);
       await openImage(nextList[nextIndex], nextList, nextIndex);
-      showToast('파일을 이동했습니다.');
+      showToast(t('toast.moveSuccess'));
     } catch (error) {
       console.warn('Failed to move file:', error);
-      showToast(getCommandErrorToast(error, '파일을 이동할 수 없습니다.'));
+      showToast(getCommandErrorToast(error, 'toast.moveFailed'));
     } finally {
       isMovingRef.current = false;
     }
@@ -811,6 +831,7 @@ function App() {
     state.currentFilePath,
     state.currentIndex,
     state.imageList,
+    t,
   ]);
 
   const handleSaveAs = useCallback(async () => {
@@ -818,7 +839,7 @@ function App() {
 
     if (!state.currentFilePath || state.isLoading || state.errorMessage) return;
     if (isSavingRef.current) {
-      showToast('저장이 이미 진행 중입니다.');
+      showToast(t('toast.saveAlreadyRunning'));
       return;
     }
 
@@ -833,7 +854,7 @@ function App() {
         filters,
       });
     } catch {
-      showToast('저장 창을 열 수 없습니다.');
+      showToast(t('toast.saveDialogFailed'));
       return;
     }
 
@@ -845,10 +866,10 @@ function App() {
         filePath: filePathAtStart,
         targetPath: target,
       });
-      showToast('저장했습니다.');
+      showToast(t('toast.saveSuccess'));
     } catch (error) {
       console.warn('Failed to save image:', error);
-      showToast(getCommandErrorToast(error, '파일을 저장할 수 없습니다.'));
+      showToast(getCommandErrorToast(error, 'toast.saveFailed'));
     } finally {
       isSavingRef.current = false;
     }
@@ -860,20 +881,22 @@ function App() {
     state.errorMessage,
     state.isLoading,
     state.originalExtension,
+    t,
   ]);
 
   const handleMoveToTrash = useCallback(async () => {
     closeContextMenu();
     if (!state.currentFilePath || isTrashingRef.current || isMovingRef.current) {
-      if (isTrashingRef.current) showToast('휴지통 이동이 이미 진행 중입니다.');
-      if (isMovingRef.current) showToast('파일 이동이 이미 진행 중입니다.');
+      if (isTrashingRef.current) showToast(t('toast.trashAlreadyRunning'));
+      if (isMovingRef.current) showToast(t('toast.moveAlreadyRunning'));
       return;
     }
 
     const previousState = state;
     const previousGifPause = gifPauseRef.current;
     const filePathAtStart = state.currentFilePath;
-    const fileNameAtStart = state.fileName || filePathAtStart.split(/[\\/]/).pop() || '파일';
+    const fileNameAtStart =
+      state.fileName || filePathAtStart.split(/[\\/]/).pop() || t('app.fileFallback');
     const trashRequestId = ++requestIdRef.current;
 
     isTrashingRef.current = true;
@@ -917,21 +940,21 @@ function App() {
           fileSize: 0,
           originalExtension: null,
         }));
-        showToast(`${fileNameAtStart}을(를) 휴지통으로 이동했습니다.`);
+        showToast(t('toast.trashed', { name: fileNameAtStart }));
         return;
       }
 
       const removedIndex = Math.max(0, previousState.currentIndex);
       const nextIndex = Math.min(removedIndex, nextList.length - 1);
       await openImage(nextList[nextIndex], nextList, nextIndex);
-      showToast(`${fileNameAtStart}을(를) 휴지통으로 이동했습니다.`);
+      showToast(t('toast.trashed', { name: fileNameAtStart }));
     } catch (error) {
       console.warn('Failed to move file to trash:', error);
       if (requestIdRef.current === trashRequestId) {
         setState(previousState);
         updateGifPause(previousGifPause);
       }
-      showToast(getCommandErrorToast(error, '휴지통으로 이동할 수 없습니다.'));
+      showToast(getCommandErrorToast(error, 'toast.trashFailed'));
     } finally {
       isTrashingRef.current = false;
     }
@@ -941,6 +964,7 @@ function App() {
     openImage,
     showToast,
     state,
+    t,
     updateGifPause,
   ]);
 
@@ -955,10 +979,10 @@ function App() {
           executablePath: app.executablePath,
         });
       } catch {
-        showToast('앱을 실행할 수 없습니다.');
+        showToast(t('toast.customAppLaunchFailed'));
       }
     },
-    [closeContextMenu, showToast, state.currentFilePath]
+    [closeContextMenu, showToast, state.currentFilePath, t]
   );
 
   const handleRegisterCustomApp = useCallback(async () => {
@@ -968,8 +992,8 @@ function App() {
       const selected = await openDialog({
         multiple: false,
         directory: false,
-        title: '사용자 정의 앱 선택',
-        filters: [{ name: '실행 파일', extensions: ['exe'] }],
+        title: t('dialog.customAppTitle'),
+        filters: [{ name: t('dialog.executableFilter'), extensions: ['exe'] }],
       });
 
       if (typeof selected !== 'string') return;
@@ -981,9 +1005,9 @@ function App() {
         name: defaultName,
       });
     } catch {
-      showToast('앱 선택 창을 열 수 없습니다.');
+      showToast(t('toast.customAppDialogFailed'));
     }
-  }, [closeContextMenu, getExecutableDisplayName, showToast]);
+  }, [closeContextMenu, getExecutableDisplayName, showToast, t]);
 
   const handleSaveRegistration = useCallback(async () => {
     if (!registrationDraft) return;
@@ -1010,11 +1034,11 @@ function App() {
     try {
       await saveCustomOpenApps(nextApps);
       setRegistrationDraft(null);
-      showToast(existingIndex >= 0 ? '등록 앱을 갱신했습니다.' : '앱을 등록했습니다.');
+      showToast(existingIndex >= 0 ? t('toast.customAppUpdated') : t('toast.customAppRegistered'));
     } catch {
-      showToast('앱 등록을 저장할 수 없습니다.');
+      showToast(t('toast.customAppSaveFailed'));
     }
-  }, [createCustomAppId, customOpenApps, registrationDraft, saveCustomOpenApps, showToast]);
+  }, [createCustomAppId, customOpenApps, registrationDraft, saveCustomOpenApps, showToast, t]);
 
   const handleRequestRemoveCustomApp = useCallback(
     (app: CustomOpenApp) => {
@@ -1032,11 +1056,11 @@ function App() {
     try {
       await saveCustomOpenApps(nextApps);
       setRemoveTarget(null);
-      showToast('등록 앱을 제거했습니다.');
+      showToast(t('toast.customAppRemoved'));
     } catch {
-      showToast('등록 앱 제거를 저장할 수 없습니다.');
+      showToast(t('toast.customAppRemoveFailed'));
     }
-  }, [customOpenApps, removeTarget, saveCustomOpenApps, showToast]);
+  }, [customOpenApps, removeTarget, saveCustomOpenApps, showToast, t]);
 
   const handlePrintFile = useCallback(async () => {
     closeContextMenu();
@@ -1045,10 +1069,9 @@ function App() {
     try {
       await invoke('print_file', { path: state.currentFilePath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      showToast(message || '인쇄를 시작할 수 없습니다.');
+      showToast(getCommandErrorToast(error, 'toast.printFailed'));
     }
-  }, [closeContextMenu, showToast, state.currentFilePath]);
+  }, [closeContextMenu, getCommandErrorToast, showToast, state.currentFilePath]);
 
   // ---- Mouse wheel zoom ----
 
@@ -1217,7 +1240,7 @@ function App() {
 
       const imageElement = viewerImageRef.current;
       if (!imageElement || imageElement.naturalWidth <= 0 || imageElement.naturalHeight <= 0) {
-        showToast('이 GIF는 일시정지할 수 없습니다.');
+        showToast(t('toast.gifPauseFailed'));
         return;
       }
 
@@ -1227,7 +1250,7 @@ function App() {
         canvas.height = imageElement.naturalHeight;
         const context = canvas.getContext('2d');
         if (!context) {
-          showToast('이 GIF는 일시정지할 수 없습니다.');
+          showToast(t('toast.gifPauseFailed'));
           return;
         }
 
@@ -1238,7 +1261,7 @@ function App() {
         });
       } catch (error) {
         console.warn('Failed to pause GIF:', error);
-        showToast('이 GIF는 일시정지할 수 없습니다.');
+        showToast(t('toast.gifPauseFailed'));
       }
     },
     [
@@ -1246,6 +1269,7 @@ function App() {
       state.currentFilePath,
       state.imageSrc,
       state.originalExtension,
+      t,
       updateGifPause,
     ]
   );
@@ -1630,7 +1654,7 @@ function App() {
     }
 
     if (state.errorMessage) {
-      return <ErrorView message={state.errorMessage} onClose={closeApp} />;
+      return <ErrorView message={state.errorMessage} t={t} onClose={closeApp} />;
     }
 
     if (!state.imageSrc) {
@@ -1643,7 +1667,7 @@ function App() {
               <polyline points="21 15 16 10 5 21" />
             </svg>
           </div>
-          <p className="empty-text">이미지를 드래그하여 열기</p>
+          <p className="empty-text">{t('empty.dragImage')}</p>
         </div>
       );
     }
@@ -1695,8 +1719,8 @@ function App() {
           <button
             type="button"
             className="window-move-handle"
-            title="창 이동"
-            aria-label="창 이동"
+            title={t('window.move')}
+            aria-label={t('window.move')}
             onMouseDown={handleMoveMouseDown}
           >
             <svg width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
@@ -1726,6 +1750,7 @@ function App() {
           height: state.naturalSize.height,
           originalExtension: state.originalExtension,
         }}
+        t={t}
         onClose={closeApp}
         onPrevImage={() => navigateImage(-1)}
         onNextImage={() => navigateImage(1)}
@@ -1748,6 +1773,7 @@ function App() {
           y={contextMenu.y}
           submenuDirection={contextMenu.submenuDirection}
           customApps={customOpenApps}
+          t={t}
           onCopyImage={handleCopyImageFromMenu}
           onReveal={handleRevealInExplorer}
           onOpenDefault={handleOpenDefaultApp}
@@ -1764,12 +1790,12 @@ function App() {
       {registrationDraft && (
         <div className="modal-backdrop" onMouseDown={() => setRegistrationDraft(null)}>
           <div className="app-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <h2 className="app-modal-title">사용자 정의 앱 등록</h2>
+            <h2 className="app-modal-title">{t('modal.customAppTitle')}</h2>
             <p className="app-modal-path" title={registrationDraft.executablePath}>
               {registrationDraft.executablePath}
             </p>
             <label className="app-modal-label" htmlFor="custom-app-name">
-              표시 이름
+              {t('modal.displayName')}
             </label>
             <input
               id="custom-app-name"
@@ -1789,10 +1815,10 @@ function App() {
             />
             <div className="app-modal-actions">
               <button type="button" className="app-modal-button secondary" onClick={() => setRegistrationDraft(null)}>
-                취소
+                {t('button.cancel')}
               </button>
               <button type="button" className="app-modal-button primary" onClick={handleSaveRegistration}>
-                저장
+                {t('button.save')}
               </button>
             </div>
           </div>
@@ -1802,16 +1828,16 @@ function App() {
       {removeTarget && (
         <div className="modal-backdrop" onMouseDown={() => setRemoveTarget(null)}>
           <div className="app-modal compact" onMouseDown={(event) => event.stopPropagation()}>
-            <h2 className="app-modal-title">등록 앱 제거</h2>
+            <h2 className="app-modal-title">{t('modal.removeAppTitle')}</h2>
             <p className="app-modal-text">
-              {removeTarget.name} 항목을 제거할까요?
+              {t('modal.removeAppMessage', { name: removeTarget.name })}
             </p>
             <div className="app-modal-actions">
               <button type="button" className="app-modal-button secondary" onClick={() => setRemoveTarget(null)}>
-                취소
+                {t('button.cancel')}
               </button>
               <button type="button" className="app-modal-button danger" onClick={handleConfirmRemoveCustomApp}>
-                제거
+                {t('button.remove')}
               </button>
             </div>
           </div>

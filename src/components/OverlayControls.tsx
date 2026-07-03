@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import type { BackgroundMode } from '../types';
+import type { TFunction } from '../i18n';
 
 interface ImageInfo {
   filePath: string | null;
@@ -18,6 +19,7 @@ interface OverlayControlsProps {
   zoom: number;
   fileName: string;
   imageInfo: ImageInfo;
+  t: TFunction;
   onClose: () => void;
   onPrevImage: () => void;
   onNextImage: () => void;
@@ -42,6 +44,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   zoom,
   fileName,
   imageInfo,
+  t,
   onClose,
   onPrevImage,
   onNextImage,
@@ -70,7 +73,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   };
 
   const formatFileSize = (bytes: number) => {
-    if (!Number.isFinite(bytes) || bytes <= 0) return '알 수 없음';
+    if (!Number.isFinite(bytes) || bytes <= 0) return t('overlay.unknown');
     const units = ['B', 'KB', 'MB', 'GB'];
     let size = bytes;
     let unitIndex = 0;
@@ -147,8 +150,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           type="button"
           className="overlay-btn theme-btn"
           onClick={(e) => handleButtonClick(e, onToggleBackgroundMode)}
-          title={backgroundMode === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
-          aria-label={backgroundMode === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+          title={backgroundMode === 'dark' ? t('overlay.switchToLight') : t('overlay.switchToDark')}
+          aria-label={backgroundMode === 'dark' ? t('overlay.switchToLight') : t('overlay.switchToDark')}
         >
           {backgroundMode === 'dark' ? (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -172,8 +175,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           type="button"
           className={`overlay-btn pin-btn ${isAlwaysOnTop ? 'active' : ''}`}
           onClick={(e) => handleButtonClick(e, onToggleAlwaysOnTop)}
-          title={isAlwaysOnTop ? '고정 해제 (T)' : '항상 위 고정 (T)'}
-          aria-label={isAlwaysOnTop ? '항상 위 고정 해제' : '항상 위 고정'}
+          title={isAlwaysOnTop ? t('overlay.unpin') : t('overlay.pin')}
+          aria-label={isAlwaysOnTop ? t('overlay.unpinAria') : t('overlay.pinAria')}
           aria-pressed={isAlwaysOnTop}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill={isAlwaysOnTop ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -196,8 +199,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           type="button"
           className="overlay-btn close-btn"
           onClick={(e) => handleButtonClick(e, onClose)}
-          title="닫기 (Esc)"
-          aria-label="창 닫기"
+          title={t('overlay.closeTitle')}
+          aria-label={t('overlay.closeAria')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -212,8 +215,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           type="button"
           className="overlay-btn nav-btn nav-left"
           onClick={(e) => handleButtonClick(e, onPrevImage)}
-          title="이전 이미지 (←)"
-          aria-label="이전 이미지"
+          title={t('overlay.previousTitle')}
+          aria-label={t('overlay.previousAria')}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
@@ -227,8 +230,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           type="button"
           className="overlay-btn nav-btn nav-right"
           onClick={(e) => handleButtonClick(e, onNextImage)}
-          title="다음 이미지 (→)"
-          aria-label="다음 이미지"
+          title={t('overlay.nextTitle')}
+          aria-label={t('overlay.nextAria')}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="9 18 15 12 9 6" />
@@ -244,8 +247,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onZoomOut)}
-            title="축소 (-)"
-            aria-label="축소"
+            title={t('overlay.zoomOutTitle')}
+            aria-label={t('overlay.zoomOutAria')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="5" y1="12" x2="19" y2="12" />
@@ -257,7 +260,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
               value={zoomDraft}
               autoFocus
               inputMode="numeric"
-              aria-label="확대 비율 입력"
+              aria-label={t('overlay.zoomInputAria')}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
               onChange={(event) => setZoomDraft(event.target.value)}
@@ -277,8 +280,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             <button
               type="button"
               className="zoom-label zoom-label-button"
-              title="클릭하여 확대 비율 입력"
-              aria-label="확대 비율 직접 입력"
+              title={t('overlay.zoomEditTitle')}
+              aria-label={t('overlay.zoomEditAria')}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={startZoomEdit}
             >
@@ -289,8 +292,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onZoomIn)}
-            title="확대 (+)"
-            aria-label="확대"
+            title={t('overlay.zoomInTitle')}
+            aria-label={t('overlay.zoomInAria')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -302,8 +305,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onOriginalSize)}
-            title="원본 크기 (0)"
-            aria-label="원본 크기"
+            title={t('overlay.originalSizeTitle')}
+            aria-label={t('overlay.originalSizeAria')}
           >
             1:1
           </button>
@@ -311,8 +314,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onFitScreen)}
-            title="화면 맞춤 (F)"
-            aria-label="화면 맞춤"
+            title={t('overlay.fitScreenTitle')}
+            aria-label={t('overlay.fitScreenAria')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 3H5a2 2 0 00-2 2v3" />
@@ -325,8 +328,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             type="button"
             className="overlay-btn zoom-btn"
             onClick={(e) => handleButtonClick(e, onRotate)}
-            title="회전 (R)"
-            aria-label="시계 방향 90도 회전"
+            title={t('overlay.rotateTitle')}
+            aria-label={t('overlay.rotateAria')}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -358,28 +361,28 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           }}
         >
           <div className="info-popover-row">
-            <span>경로</span>
-            <strong title={imageInfo.filePath ?? ''}>{imageInfo.filePath || '알 수 없음'}</strong>
+            <span>{t('overlay.path')}</span>
+            <strong title={imageInfo.filePath ?? ''}>{imageInfo.filePath || t('overlay.unknown')}</strong>
           </div>
           <div className="info-popover-row">
-            <span>크기</span>
+            <span>{t('overlay.dimensions')}</span>
             <strong>
               {imageInfo.width > 0 && imageInfo.height > 0
                 ? `${imageInfo.width} x ${imageInfo.height}`
-                : '알 수 없음'}
+                : t('overlay.unknown')}
             </strong>
           </div>
           <div className="info-popover-row">
-            <span>파일 크기</span>
+            <span>{t('overlay.fileSize')}</span>
             <strong>{formatFileSize(imageInfo.fileSize)}</strong>
           </div>
           <div className="info-popover-row">
-            <span>확장자</span>
-            <strong>{imageInfo.originalExtension || '알 수 없음'}</strong>
+            <span>{t('overlay.extension')}</span>
+            <strong>{imageInfo.originalExtension || t('overlay.unknown')}</strong>
           </div>
           {totalImages > 1 && (
             <div className="info-popover-row">
-              <span>순번</span>
+              <span>{t('overlay.index')}</span>
               <strong>{currentIndex + 1} / {totalImages}</strong>
             </div>
           )}

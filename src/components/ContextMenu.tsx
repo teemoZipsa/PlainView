@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import type { CustomOpenApp } from '../types';
+import type { TFunction } from '../i18n';
 
 type SubmenuDirection = 'right' | 'left' | 'stacked';
 
@@ -9,6 +10,7 @@ interface ContextMenuProps {
   y: number;
   submenuDirection: SubmenuDirection;
   customApps: CustomOpenApp[];
+  t: TFunction;
   onCopyImage: () => void;
   onReveal: () => void;
   onOpenDefault: () => void;
@@ -27,6 +29,7 @@ export default function ContextMenu({
   y,
   submenuDirection,
   customApps,
+  t,
   onCopyImage,
   onReveal,
   onOpenDefault,
@@ -47,27 +50,27 @@ export default function ContextMenu({
       onContextMenu={(event) => event.preventDefault()}
     >
       <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyImage}>
-        이미지 복사
+        {t('menu.copyImage')}
       </button>
       <div className="context-menu-divider" />
       <button className="context-menu-item" type="button" role="menuitem" onClick={onReveal}>
-        탐색기에서 보기
+        {t('menu.reveal')}
       </button>
       <button className="context-menu-item" type="button" role="menuitem" onClick={onOpenDefault}>
-        기본 앱으로 열기
+        {t('menu.openDefault')}
       </button>
       <button className="context-menu-item" type="button" role="menuitem" onClick={onMoveFile}>
-        다른 폴더로 이동...
+        {t('menu.moveFile')}
       </button>
       <button className="context-menu-item" type="button" role="menuitem" onClick={onSaveAs}>
-        다른 이름으로 저장...
+        {t('menu.saveAs')}
       </button>
       <button className="context-menu-item danger" type="button" role="menuitem" onClick={onMoveToTrash}>
-        휴지통으로 이동
+        {t('menu.moveToTrash')}
       </button>
 
       <div className={`context-menu-item context-menu-parent submenu-${submenuDirection}`} role="menuitem" tabIndex={0}>
-        <span>사용자 정의 앱으로 열기</span>
+        <span>{t('menu.openCustom')}</span>
         <span className="context-menu-arrow">›</span>
         <div className={`context-submenu ${submenuDirection}`}>
           {customApps.length > 0 ? (
@@ -84,14 +87,14 @@ export default function ContextMenu({
               </button>
             ))
           ) : (
-            <div className="context-menu-item disabled">등록된 앱 없음</div>
+            <div className="context-menu-item disabled">{t('menu.noCustomApps')}</div>
           )}
           <div className="context-menu-divider" />
           <button className="context-menu-item" type="button" role="menuitem" onClick={onRegisterApp}>
-            앱 등록...
+            {t('menu.registerApp')}
           </button>
           <div className={`context-menu-item context-menu-parent submenu-${submenuDirection}`} role="menuitem" tabIndex={0}>
-            <span>등록 앱 제거</span>
+            <span>{t('menu.removeRegisteredApp')}</span>
             <span className="context-menu-arrow">›</span>
             <div className={`context-submenu nested ${submenuDirection}`}>
               {customApps.length > 0 ? (
@@ -108,7 +111,7 @@ export default function ContextMenu({
                   </button>
                 ))
               ) : (
-                <div className="context-menu-item disabled">제거할 앱 없음</div>
+                <div className="context-menu-item disabled">{t('menu.noAppsToRemove')}</div>
               )}
             </div>
           </div>
@@ -117,7 +120,7 @@ export default function ContextMenu({
 
       <div className="context-menu-divider" />
       <button className="context-menu-item" type="button" role="menuitem" onClick={onPrint}>
-        인쇄
+        {t('menu.print')}
       </button>
     </div>
   );

@@ -1,11 +1,13 @@
 import React from 'react';
+import type { TFunction } from '../i18n';
 
 interface ErrorViewProps {
   message: string;
+  t: TFunction;
   onClose: () => void;
 }
 
-const ErrorView: React.FC<ErrorViewProps> = ({ message, onClose }) => {
+const ErrorView: React.FC<ErrorViewProps> = ({ message, t, onClose }) => {
   return (
     <div className="error-view">
       <div className="error-icon">
@@ -18,7 +20,7 @@ const ErrorView: React.FC<ErrorViewProps> = ({ message, onClose }) => {
       </div>
       <p className="error-message">{message}</p>
       <button type="button" className="error-close-btn" onClick={onClose}>
-        닫기
+        {t('button.close')}
       </button>
     </div>
   );
