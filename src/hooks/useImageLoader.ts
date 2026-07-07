@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { useCallback, useRef } from 'react';
-import type { LoadedImageData, Settings } from '../types';
+import type { CommandError, LoadedImageData, Settings } from '../types';
 
 // ---- LRU Cache with size limit ----
 
@@ -44,6 +44,29 @@ function cacheGet(key: string): CachedImage | undefined {
   return value;
 }
 
+function buildImageSource(data: LoadedImageData): string {
+  if (data.sourceKind === 'file') {
+    return convertFileSrc(data.filePath);
+  }
+
+  if (!data.base64) {
+    throw new Error('image_load_failed');
+  }
+
+  return `data:${data.mimeType};base64,${data.base64}`;
+}
+
+function imageLoadFailedError(originalExtension: string | null): Error | CommandError {
+  if (originalExtension?.toLowerCase() === 'avif') {
+    return {
+      kind: 'avif_unsupported',
+      message: 'AVIF image could not be displayed by the current WebView runtime.',
+    };
+  }
+
+  return new Error('image_load_failed');
+}
+
 // ---- Hook ----
 
 export function useImageLoader() {
@@ -72,7 +95,7 @@ export function useImageLoader() {
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
         });
-        img.onerror = () => reject(new Error('image_load_failed'));
+        img.onerror = () => reject(imageLoadFailedError(cached.originalExtension));
         img.src = cached.src;
       });
     }
@@ -81,7 +104,7 @@ export function useImageLoader() {
 
     try {
       const data = await invoke<LoadedImageData>('read_image', { path: filePath });
-      const src = `data:${data.mimeType};base64,${data.base64}`;
+      const src = buildImageSource(data);
 
       // LRU cache set (auto-evicts oldest if full)
       cacheSet(filePath, {
@@ -108,7 +131,7 @@ export function useImageLoader() {
         };
         img.onerror = () => {
           loadingRef.current = false;
-          reject(new Error('image_load_failed'));
+          reject(imageLoadFailedError(data.originalExtension));
         };
         img.src = src;
       });
@@ -123,8 +146,9 @@ export function useImageLoader() {
       if (!preloadCache.has(p)) {
         try {
           const data = await invoke<LoadedImageData>('read_image', { path: p });
+          const src = buildImageSource(data);
           cacheSet(p, {
-            src: `data:${data.mimeType};base64,${data.base64}`,
+            src,
             fileName: data.fileName,
             filePath: data.filePath,
             fileSize: data.fileSize,

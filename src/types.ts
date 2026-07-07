@@ -1,5 +1,6 @@
 export interface LoadedImageData {
-  base64: string;
+  sourceKind: 'file' | 'data';
+  base64: string | null;
   mimeType: string;
   fileName: string;
   filePath: string;
@@ -22,6 +23,7 @@ export type CommandErrorKind =
   | 'trash_failed'
   | 'save_failed'
   | 'unsupported_format'
+  | 'avif_unsupported'
   | 'unsupported_heic'
   | 'unsupported_raw'
   | 'decode_failed'
@@ -34,6 +36,7 @@ export type CommandErrorKind =
   | 'settings_save_failed'
   | 'window_operation_failed'
   | 'custom_app_not_found'
+  | 'print_failed'
   | 'print_unsupported'
   | 'image_load_failed'
   | 'image_size_failed'

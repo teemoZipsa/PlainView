@@ -15,6 +15,9 @@ PlainView supports Korean and English UI text. It uses Korean for Korean system/
 
 JPG, JPEG, PNG, WebP, GIF, BMP, TIF, TIFF, ICO, AVIF, JXL, PSD, TGA, PBM, PGM, PNM, PPM, PAM, DDS
 
+JPG, JPEG, PNG, WebP, GIF, BMP, and AVIF are rendered through the WebView asset protocol instead of being copied into large base64 strings.
+If the installed WebView runtime cannot display AVIF, PlainView shows a clear AVIF-specific error.
+
 PAM support focuses on standard tuple types.
 DDS support focuses on DXT1/BC1, DXT3/BC2, and DXT5/BC3 families.
 BC4, BC5, BC6H, BC7, other DXGI variants, and general uncompressed DDS files are not supported.

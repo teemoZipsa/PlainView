@@ -5,7 +5,7 @@ use image::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -17,6 +17,10 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
+};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SHELLEXECUTEINFOW};
@@ -101,7 +105,8 @@ impl Default for Settings {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageData {
-    pub base64: String,
+    pub source_kind: String,
+    pub base64: Option<String>,
     pub mime_type: String,
     pub file_name: String,
     pub file_path: String,
@@ -158,15 +163,19 @@ fn shell_error_from_code(code: u32) -> CommandError {
 }
 
 #[cfg(windows)]
-fn open_with_shell_execute(path: &Path) -> Result<(), CommandError> {
+fn shell_execute(path: &Path, verb: Option<&str>) -> Result<(), CommandError> {
     let file_wide = to_wide_null(path.as_os_str());
+    let verb_wide = verb.map(|value| to_wide_null(std::ffi::OsStr::new(value)));
     let directory_wide = path.parent().map(|parent| to_wide_null(parent.as_os_str()));
 
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_FLAG_NO_UI,
         hwnd: std::ptr::null_mut(),
-        lpVerb: std::ptr::null(),
+        lpVerb: verb_wide
+            .as_ref()
+            .map(|value| value.as_ptr())
+            .unwrap_or(std::ptr::null()),
         lpFile: file_wide.as_ptr(),
         lpParameters: std::ptr::null(),
         lpDirectory: directory_wide
@@ -192,6 +201,19 @@ fn open_with_shell_execute(path: &Path) -> Result<(), CommandError> {
     Err(shell_error_from_code(code))
 }
 
+#[cfg(windows)]
+fn open_with_shell_execute(path: &Path) -> Result<(), CommandError> {
+    shell_execute(path, None)
+}
+
+#[cfg(windows)]
+fn print_with_shell_execute(path: &Path) -> Result<(), CommandError> {
+    shell_execute(path, Some("print")).map_err(|error| match error.kind.as_str() {
+        "file_not_found" | "access_denied" => error,
+        _ => command_error("print_failed", error.message),
+    })
+}
+
 #[cfg(not(windows))]
 fn open_with_shell_execute(_path: &Path) -> Result<(), CommandError> {
     Err(command_error(
@@ -210,6 +232,30 @@ fn get_settings_path(app: &AppHandle) -> PathBuf {
         let _ = fs::create_dir_all(&app_dir);
     }
     app_dir.join("settings.json")
+}
+
+#[cfg(windows)]
+fn replace_file_atomically(source: &Path, target: &Path) -> std::io::Result<()> {
+    let source_wide = to_wide_null(source.as_os_str());
+    let target_wide = to_wide_null(target.as_os_str());
+    let success = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            target_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+
+    if success != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file_atomically(source: &Path, target: &Path) -> std::io::Result<()> {
+    fs::rename(source, target)
 }
 
 /// Get mime type from extension
@@ -252,6 +298,13 @@ fn is_supported_image(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+fn uses_original_file_source(ext: &str) -> bool {
+    matches!(
+        ext,
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif"
+    )
 }
 
 fn encode_png(image: DynamicImage) -> Result<DecodedImage, CommandError> {
@@ -399,7 +452,7 @@ fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, CommandError> {
     }
 }
 
-/// Read an image file and return base64 encoded data
+/// Read an image file and return render metadata.
 #[tauri::command]
 fn read_image(path: String) -> Result<ImageData, CommandError> {
     let file_path = PathBuf::from(&path);
@@ -439,18 +492,36 @@ fn read_image(path: String) -> Result<ImageData, CommandError> {
             )
         })?
         .len();
-    let decoded = decode_image(&file_path, &ext)?;
-    let base64_str = general_purpose::STANDARD.encode(&decoded.data);
+
+    let (source_kind, base64, mime_type, width, height) = if uses_original_file_source(&ext) {
+        (
+            "file".to_string(),
+            None,
+            get_mime_type(&ext).to_string(),
+            None,
+            None,
+        )
+    } else {
+        let decoded = decode_image(&file_path, &ext)?;
+        (
+            "data".to_string(),
+            Some(general_purpose::STANDARD.encode(&decoded.data)),
+            decoded.mime_type.to_string(),
+            decoded.width,
+            decoded.height,
+        )
+    };
 
     Ok(ImageData {
-        base64: base64_str,
-        mime_type: decoded.mime_type.to_string(),
+        source_kind,
+        base64,
+        mime_type,
         file_name,
         file_path: file_path.to_string_lossy().to_string(),
         file_size,
         original_extension,
-        width: decoded.width,
-        height: decoded.height,
+        width,
+        height,
     })
 }
 
@@ -536,7 +607,26 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<(), CommandError>
             format!("Could not serialize settings: {}", e),
         )
     })?;
-    fs::write(&path, json).map_err(|e| {
+
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("settings.json");
+    let temp_path = path.with_file_name(format!("{}.{}.tmp", file_name, std::process::id()));
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&temp_path)?;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        replace_file_atomically(&temp_path, &path)
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    write_result.map_err(|e| {
         command_error(
             "settings_save_failed",
             format!("Could not save settings: {}", e),
@@ -594,7 +684,7 @@ fn trash_os_error_is_not_found(code: i32) -> bool {
     #[cfg(windows)]
     {
         let code = normalize_windows_error_code(code);
-        return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+        code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND
     }
 
     #[cfg(not(windows))]
@@ -607,7 +697,7 @@ fn trash_os_error_is_not_found(code: i32) -> bool {
 fn trash_os_error_is_access_denied(code: i32) -> bool {
     #[cfg(windows)]
     {
-        return normalize_windows_error_code(code) == ERROR_ACCESS_DENIED;
+        normalize_windows_error_code(code) == ERROR_ACCESS_DENIED
     }
 
     #[cfg(not(windows))]
@@ -733,7 +823,7 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
     let target = unique_target_path(&target_dir_canonical, file_name);
 
     match fs::rename(&source, &target) {
-        Ok(()) => return path_to_string(&target),
+        Ok(()) => path_to_string(&target),
         Err(err) if err.raw_os_error() == Some(ERROR_NOT_SAME_DEVICE) => {
             let copied =
                 fs::copy(&source, &target).map_err(|e| io_error_to_command("copy_failed", e))?;
@@ -751,9 +841,9 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
 
             fs::remove_file(&source)
                 .map_err(|e| io_error_to_command("remove_original_failed", e))?;
-            return path_to_string(&target);
+            path_to_string(&target)
         }
-        Err(err) => return Err(io_error_to_command("unknown", err)),
+        Err(err) => Err(io_error_to_command("unknown", err)),
     }
 }
 
@@ -844,37 +934,7 @@ fn print_file(path: String) -> Result<(), CommandError> {
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "$ErrorActionPreference='Stop'; Start-Process -FilePath $args[0] -Verb Print",
-            ])
-            .arg(&file)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| {
-                command_error("open_failed", format!("Could not start printing: {}", e))
-            })?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(if stderr.is_empty() {
-                command_error("open_failed", "Could not start printing.")
-            } else {
-                command_error(
-                    "open_failed",
-                    format!("Could not start printing: {}", stderr),
-                )
-            })
-        }
+        print_with_shell_execute(&file)
     }
 
     #[cfg(not(windows))]
@@ -916,4 +976,89 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(test_name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "plainview-{}-{}-{}",
+            test_name,
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn native_image_returns_file_source_without_base64() {
+        let dir = temp_dir("native-source");
+        let path = dir.join("sample.JPG");
+        fs::write(&path, b"not decoded in this path").unwrap();
+
+        let data = read_image(path.to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(data.source_kind, "file");
+        assert!(data.base64.is_none());
+        assert_eq!(data.mime_type, "image/jpeg");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn recognized_unsupported_image_returns_specific_error() {
+        let dir = temp_dir("unsupported");
+        let path = dir.join("sample.heic");
+        fs::write(&path, b"unsupported").unwrap();
+
+        let error = read_image(path.to_string_lossy().to_string()).unwrap_err();
+
+        assert_eq!(error.kind, "unsupported_heic");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_image_as_same_path_preserves_original_file() {
+        let dir = temp_dir("save-self");
+        let path = dir.join("sample.png");
+        let bytes = b"original bytes";
+        fs::write(&path, bytes).unwrap();
+
+        let path_string = path.to_string_lossy().to_string();
+        let saved_path = save_image_as(path_string.clone(), path_string).unwrap();
+
+        assert_eq!(saved_path, path.to_string_lossy());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_image_as_copies_original_bytes() {
+        let dir = temp_dir("save-copy");
+        let source = dir.join("source.png");
+        let target = dir.join("target.png");
+        let bytes = b"source bytes";
+        fs::write(&source, bytes).unwrap();
+
+        let saved_path = save_image_as(
+            source.to_string_lossy().to_string(),
+            target.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(saved_path, target.to_string_lossy());
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }
