@@ -86,6 +86,9 @@ npm run tauri dev
 
 # 프로덕션 빌드
 npm run tauri build
+
+# Windows 릴리즈 산출물 생성: setup, MSI, portable EXE
+npm run release:windows
 ```
 
 ## 현재 제한 사항

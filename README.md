@@ -86,6 +86,9 @@ npm run tauri dev
 
 # Build for production
 npm run tauri build
+
+# Build Windows release artifacts: setup, MSI, and portable EXE
+npm run release:windows
 ```
 
 ## Current Limitations
