@@ -1,5 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import type { CommandError, LoadedImageData, Settings } from '../types';
 
 // ---- LRU Cache with size limit ----
@@ -70,8 +70,6 @@ function imageLoadFailedError(originalExtension: string | null): Error | Command
 // ---- Hook ----
 
 export function useImageLoader() {
-  const loadingRef = useRef(false);
-
   const loadImage = useCallback(async (filePath: string): Promise<{
     src: string;
     fileName: string;
@@ -100,8 +98,6 @@ export function useImageLoader() {
       });
     }
 
-    loadingRef.current = true;
-
     try {
       const data = await invoke<LoadedImageData>('read_image', { path: filePath });
       const src = buildImageSource(data);
@@ -118,7 +114,6 @@ export function useImageLoader() {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
-          loadingRef.current = false;
           resolve({
             src,
             fileName: data.fileName,
@@ -130,13 +125,11 @@ export function useImageLoader() {
           });
         };
         img.onerror = () => {
-          loadingRef.current = false;
           reject(imageLoadFailedError(data.originalExtension));
         };
         img.src = src;
       });
     } catch (err) {
-      loadingRef.current = false;
       throw err;
     }
   }, []);
@@ -198,6 +191,5 @@ export function useImageLoader() {
     loadSettings,
     saveSettings,
     getCliArgs,
-    isLoading: loadingRef.current,
   };
 }

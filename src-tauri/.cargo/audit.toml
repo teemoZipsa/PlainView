@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+  # Windows-only distribution. These quick-xml advisories are pulled in through
+  # the Linux Wayland clipboard transitive path of tauri-plugin-clipboard-manager.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]

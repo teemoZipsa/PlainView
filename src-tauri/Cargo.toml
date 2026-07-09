@@ -22,6 +22,8 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 jxl-oxide = { version = "0.12.5", features = ["image"] }
 psd = "0.3.5"
 tauri-plugin-dialog = "2"
-tauri-plugin-clipboard-manager = "2.3.2"
 trash = "5.2.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(windows)'.dependencies]
+tauri-plugin-clipboard-manager = "2.3.2"
