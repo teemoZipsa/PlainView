@@ -407,6 +407,32 @@ html, body, #root {
   border-color: var(--accent-ring);
 }
 
+.rename-input-row {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  background-color: var(--surface-input);
+}
+
+.rename-input-row:focus-within {
+  border-color: var(--accent-ring);
+}
+
+.rename-input-row .app-modal-input {
+  min-width: 0;
+  border: none;
+  background-color: transparent;
+}
+
+.rename-extension {
+  flex: 0 0 auto;
+  padding-right: 10px;
+  color: var(--text-muted);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+}
+
 .app-modal-actions {
   display: flex;
   justify-content: flex-end;

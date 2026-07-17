@@ -51,9 +51,11 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Image panning** - drag to pan while zoomed in
 - **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
 - **Window dragging** - drag the image area in default mode, or use the top handle / Alt-drag while zoomed
-- **Context menu** - show in Explorer, open with default app, save as, register/open custom apps, move to Recycle Bin, print
+- **Context menu** - copy the image or file path, show in Explorer, open with the default app, save as, rename, register/open custom apps, move to Recycle Bin, print
 - **Image copy** - copy the current image to the clipboard with `Ctrl+C` or the context menu
+- **File path copy** - copy the current image's full path from the context menu
 - **Save as** - save the original image file with `Ctrl+S` or the context menu
+- **Rename** - rename the current image while preserving its file extension
 - **Quick file move** - move the current image to another folder with the context menu or `Ctrl+M`
 - **Recycle Bin support** - move the current image to the Recycle Bin with the context menu or `Delete`
 - **GIF pause** - click a GIF to pause on the current frame, then click again to resume

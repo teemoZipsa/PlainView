@@ -13,10 +13,12 @@ interface ContextMenuProps {
   customApps: CustomOpenApp[];
   t: TFunction;
   onCopyImage: () => void;
+  onCopyPath: () => void;
   onReveal: () => void;
   onOpenDefault: () => void;
   onMoveFile: () => void;
   onSaveAs: () => void;
+  onRename: () => void;
   onMoveToTrash: () => void;
   onOpenCustom: (app: CustomOpenApp) => void;
   onRegisterApp: () => void;
@@ -33,10 +35,12 @@ export default function ContextMenu({
   customApps,
   t,
   onCopyImage,
+  onCopyPath,
   onReveal,
   onOpenDefault,
   onMoveFile,
   onSaveAs,
+  onRename,
   onMoveToTrash,
   onOpenCustom,
   onRegisterApp,
@@ -56,6 +60,9 @@ export default function ContextMenu({
       <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyImage}>
         {t('menu.copyImage')}
       </button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyPath}>
+        {t('menu.copyPath')}
+      </button>
       <div className="context-menu-divider" />
       <button className="context-menu-item" type="button" role="menuitem" onClick={onReveal}>
         {t('menu.reveal')}
@@ -68,6 +75,9 @@ export default function ContextMenu({
       </button>
       <button className="context-menu-item" type="button" role="menuitem" onClick={onSaveAs}>
         {t('menu.saveAs')}
+      </button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onRename}>
+        {t('menu.rename')}
       </button>
       <button className="context-menu-item danger" type="button" role="menuitem" onClick={onMoveToTrash}>
         {t('menu.moveToTrash')}

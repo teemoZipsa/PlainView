@@ -184,6 +184,10 @@ export function useImageLoader() {
     return invoke<string[]>('get_cli_args');
   }, []);
 
+  const invalidateImage = useCallback((filePath: string) => {
+    preloadCache.delete(filePath);
+  }, []);
+
   return {
     loadImage,
     preloadImages,
@@ -191,5 +195,6 @@ export function useImageLoader() {
     loadSettings,
     saveSettings,
     getCliArgs,
+    invalidateImage,
   };
 }

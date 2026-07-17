@@ -4,6 +4,7 @@ use image::{
     ImageFormat, ImageReader,
 };
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
@@ -892,6 +893,101 @@ fn save_image_as(file_path: String, target_path: String) -> Result<String, Comma
     path_to_string(&target)
 }
 
+fn validate_rename_stem(value: &str) -> Result<&str, CommandError> {
+    let trimmed = value.trim();
+    let has_invalid_character = trimmed.chars().any(|character| {
+        character < '\u{20}'
+            || matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            )
+    });
+
+    if trimmed.is_empty()
+        || trimmed != value
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.ends_with('.')
+        || has_invalid_character
+    {
+        return Err(command_error(
+            "invalid_file_name",
+            "The file name contains invalid characters.",
+        ));
+    }
+
+    let device_name = trimmed
+        .split('.')
+        .next()
+        .unwrap_or(trimmed)
+        .to_ascii_uppercase();
+    let is_reserved_device = matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (device_name.len() == 4
+            && (device_name.starts_with("COM") || device_name.starts_with("LPT"))
+            && matches!(device_name.as_bytes()[3], b'1'..=b'9'));
+
+    if is_reserved_device {
+        return Err(command_error(
+            "invalid_file_name",
+            "The file name is reserved by Windows.",
+        ));
+    }
+
+    Ok(trimmed)
+}
+
+#[tauri::command]
+fn rename_file(file_path: String, new_name: String) -> Result<String, CommandError> {
+    let source = PathBuf::from(&file_path);
+    if !source.is_file() {
+        return Err(command_error("file_not_found", "File not found."));
+    }
+
+    let new_stem = validate_rename_stem(&new_name)?;
+    let parent = source
+        .parent()
+        .ok_or_else(|| command_error("parent_folder_not_found", "Could not find parent folder."))?;
+
+    let mut target_name = OsString::from(new_stem);
+    if let Some(extension) = source.extension() {
+        target_name.push(".");
+        target_name.push(extension);
+    }
+    let target = parent.join(target_name);
+
+    if target == source {
+        return path_to_string(&source);
+    }
+
+    if target.exists() {
+        let source_canonical = fs::canonicalize(&source)
+            .map_err(|error| io_error_to_command("rename_failed", error))?;
+        let target_canonical = fs::canonicalize(&target)
+            .map_err(|error| io_error_to_command("rename_failed", error))?;
+
+        // A case-only rename points to the same file on Windows and is safe to attempt.
+        if source_canonical != target_canonical {
+            return Err(command_error(
+                "file_already_exists",
+                "A file with that name already exists.",
+            ));
+        }
+    }
+
+    fs::rename(&source, &target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            command_error(
+                "file_already_exists",
+                "A file with that name already exists.",
+            )
+        } else {
+            io_error_to_command("rename_failed", error)
+        }
+    })?;
+
+    path_to_string(&target)
+}
+
 #[tauri::command]
 fn move_file_to_trash(file_path: String) -> Result<(), CommandError> {
     let source = PathBuf::from(&file_path);
@@ -969,6 +1065,7 @@ pub fn run() {
             open_with_default_app,
             move_file_to_folder,
             save_image_as,
+            rename_file,
             move_file_to_trash,
             open_with_custom_app,
             print_file,
@@ -1060,5 +1157,66 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), bytes);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rename_file_preserves_extension_and_contents() {
+        let dir = temp_dir("rename");
+        let source = dir.join("source.PNG");
+        let bytes = b"source bytes";
+        fs::write(&source, bytes).unwrap();
+
+        let renamed_path =
+            rename_file(source.to_string_lossy().to_string(), "renamed".into()).unwrap();
+        let target = dir.join("renamed.PNG");
+
+        assert_eq!(renamed_path, target.to_string_lossy());
+        assert!(!source.exists());
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rename_file_rejects_existing_target_without_overwriting() {
+        let dir = temp_dir("rename-collision");
+        let source = dir.join("source.png");
+        let target = dir.join("existing.png");
+        fs::write(&source, b"source").unwrap();
+        fs::write(&target, b"existing").unwrap();
+
+        let error =
+            rename_file(source.to_string_lossy().to_string(), "existing".into()).unwrap_err();
+
+        assert_eq!(error.kind, "file_already_exists");
+        assert_eq!(fs::read(&source).unwrap(), b"source");
+        assert_eq!(fs::read(&target).unwrap(), b"existing");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rename_file_allows_case_only_name_changes() {
+        let dir = temp_dir("rename-case");
+        let source = dir.join("sample.png");
+        fs::write(&source, b"source").unwrap();
+
+        let renamed_path =
+            rename_file(source.to_string_lossy().to_string(), "Sample".into()).unwrap();
+        let target = dir.join("Sample.png");
+
+        assert_eq!(renamed_path, target.to_string_lossy());
+        assert!(target.is_file());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rename_file_rejects_invalid_or_reserved_names() {
+        for name in ["", "bad/name", "trailing.", "CON", "LPT1.notes"] {
+            let error = validate_rename_stem(name).unwrap_err();
+            assert_eq!(error.kind, "invalid_file_name", "name: {name}");
+        }
     }
 }

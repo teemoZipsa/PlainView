@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { Image as TauriImage } from '@tauri-apps/api/image';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { writeImage } from '@tauri-apps/plugin-clipboard-manager';
+import { writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
@@ -54,6 +54,13 @@ interface AppRegistrationDraft {
   name: string;
 }
 
+interface RenameDraft {
+  filePath: string;
+  originalName: string;
+  name: string;
+  extension: string;
+}
+
 interface GifPauseState {
   filePath: string;
   pausedSrc: string;
@@ -92,6 +99,7 @@ function App() {
   const [customOpenApps, setCustomOpenApps] = useState<CustomOpenApp[]>([]);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [registrationDraft, setRegistrationDraft] = useState<AppRegistrationDraft | null>(null);
+  const [renameDraft, setRenameDraft] = useState<RenameDraft | null>(null);
   const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
@@ -129,6 +137,7 @@ function App() {
   const isMovingRef = useRef(false);
   const isTrashingRef = useRef(false);
   const isSavingRef = useRef(false);
+  const isRenamingRef = useRef(false);
   const hasDraggedRef = useRef(false);
   const gifPauseRef = useRef<GifPauseState | null>(null);
   const gifClickSequenceRef = useRef<{
@@ -140,8 +149,15 @@ function App() {
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
 
-  const { loadImage, preloadImages, scanFolder, loadSettings, saveSettings, getCliArgs } =
-    useImageLoader();
+  const {
+    loadImage,
+    preloadImages,
+    scanFolder,
+    loadSettings,
+    saveSettings,
+    getCliArgs,
+    invalidateImage,
+  } = useImageLoader();
 
   const overlay = useOverlayVisibility();
 
@@ -795,6 +811,19 @@ function App() {
     void handleCopyImage();
   }, [closeContextMenu, handleCopyImage]);
 
+  const handleCopyPath = useCallback(async () => {
+    closeContextMenu();
+    if (!state.currentFilePath) return;
+
+    try {
+      await writeText(state.currentFilePath);
+      showToast(t('toast.pathCopySuccess'));
+    } catch (error) {
+      console.warn('Failed to copy file path:', error);
+      showToast(t('toast.pathCopyFailed'));
+    }
+  }, [closeContextMenu, showToast, state.currentFilePath, t]);
+
   const handleOpenDefaultApp = useCallback(async () => {
     closeContextMenu();
     if (!state.currentFilePath) return;
@@ -934,6 +963,110 @@ function App() {
     state.isLoading,
     state.originalExtension,
     t,
+  ]);
+
+  const handleRequestRename = useCallback(() => {
+    closeContextMenu();
+    if (!state.currentFilePath || state.isLoading || state.errorMessage) return;
+
+    const fileName =
+      state.fileName || state.currentFilePath.split(/[\\/]/).pop() || t('app.fileFallback');
+    const extensionIndex = fileName.lastIndexOf('.');
+    const hasExtension = extensionIndex > 0 && extensionIndex < fileName.length - 1;
+    const name = hasExtension ? fileName.slice(0, extensionIndex) : fileName;
+    const extension = hasExtension ? fileName.slice(extensionIndex) : '';
+
+    setRenameDraft({
+      filePath: state.currentFilePath,
+      originalName: name,
+      name,
+      extension,
+    });
+  }, [closeContextMenu, state.currentFilePath, state.errorMessage, state.fileName, state.isLoading, t]);
+
+  const handleConfirmRename = useCallback(async () => {
+    if (!renameDraft) return;
+    if (isRenamingRef.current) {
+      showToast(t('toast.renameAlreadyRunning'));
+      return;
+    }
+
+    if (renameDraft.name === renameDraft.originalName) {
+      setRenameDraft(null);
+      return;
+    }
+
+    const draft = renameDraft;
+    isRenamingRef.current = true;
+
+    try {
+      const renamedPath = await invoke<string>('rename_file', {
+        filePath: draft.filePath,
+        newName: draft.name,
+      });
+      invalidateImage(draft.filePath);
+
+      let rescannedList: string[] | null = null;
+      try {
+        rescannedList = await scanFolder(renamedPath);
+      } catch {
+        // The rename itself succeeded. Fall back to replacing the path in the current list.
+      }
+
+      const pathMatches = (path: string) =>
+        path.toLowerCase() === draft.filePath.toLowerCase();
+      const renamedFileName = renamedPath.split(/[\\/]/).pop() || `${draft.name}${draft.extension}`;
+
+      setState((prev) => {
+        if (!prev.currentFilePath || !pathMatches(prev.currentFilePath)) return prev;
+
+        const fallbackList = prev.imageList.map((path) => (pathMatches(path) ? renamedPath : path));
+        const imageList = rescannedList && rescannedList.length > 0 ? rescannedList : fallbackList;
+        const currentIndex = imageList.findIndex(
+          (path) => path.toLowerCase() === renamedPath.toLowerCase()
+        );
+
+        return {
+          ...prev,
+          currentFilePath: renamedPath,
+          fileName: renamedFileName,
+          imageList,
+          currentIndex: currentIndex >= 0 ? currentIndex : prev.currentIndex,
+        };
+      });
+
+      if (gifPauseRef.current && pathMatches(gifPauseRef.current.filePath)) {
+        updateGifPause({ ...gifPauseRef.current, filePath: renamedPath });
+      }
+      if (gifClickSequenceRef.current && pathMatches(gifClickSequenceRef.current.filePath)) {
+        gifClickSequenceRef.current = { ...gifClickSequenceRef.current, filePath: renamedPath };
+      }
+      if (
+        fullscreenSnapshotRef.current?.currentFilePath &&
+        pathMatches(fullscreenSnapshotRef.current.currentFilePath)
+      ) {
+        fullscreenSnapshotRef.current = {
+          ...fullscreenSnapshotRef.current,
+          currentFilePath: renamedPath,
+        };
+      }
+
+      setRenameDraft(null);
+      showToast(t('toast.renameSuccess', { name: renamedFileName }));
+    } catch (error) {
+      console.warn('Failed to rename file:', error);
+      showToast(getCommandErrorToast(error, 'toast.renameFailed'));
+    } finally {
+      isRenamingRef.current = false;
+    }
+  }, [
+    getCommandErrorToast,
+    invalidateImage,
+    renameDraft,
+    scanFolder,
+    showToast,
+    t,
+    updateGifPause,
   ]);
 
   const handleMoveToTrash = useCallback(async () => {
@@ -1463,7 +1596,7 @@ function App() {
     onSaveAs: () => {
       void handleSaveAs();
     },
-    isEnabled: () => !contextMenu && !registrationDraft && !removeTarget,
+    isEnabled: () => !contextMenu && !registrationDraft && !renameDraft && !removeTarget,
   });
 
   // ---- Context menu dismissal ----
@@ -1833,10 +1966,12 @@ function App() {
           customApps={customOpenApps}
           t={t}
           onCopyImage={handleCopyImageFromMenu}
+          onCopyPath={handleCopyPath}
           onReveal={handleRevealInExplorer}
           onOpenDefault={handleOpenDefaultApp}
           onMoveFile={handleMoveFile}
           onSaveAs={handleSaveAs}
+          onRename={handleRequestRename}
           onMoveToTrash={handleMoveToTrash}
           onOpenCustom={handleOpenCustomApp}
           onRegisterApp={handleRegisterCustomApp}
@@ -1877,6 +2012,52 @@ function App() {
               </button>
               <button type="button" className="app-modal-button primary" onClick={handleSaveRegistration}>
                 {t('button.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renameDraft && (
+        <div className="modal-backdrop" onMouseDown={() => setRenameDraft(null)}>
+          <div className="app-modal compact" onMouseDown={(event) => event.stopPropagation()}>
+            <h2 className="app-modal-title">{t('modal.renameTitle')}</h2>
+            <p className="app-modal-path" title={renameDraft.filePath}>
+              {renameDraft.filePath}
+            </p>
+            <label className="app-modal-label" htmlFor="rename-file-name">
+              {t('modal.renameLabel')}
+            </label>
+            <div className="rename-input-row">
+              <input
+                id="rename-file-name"
+                className="app-modal-input"
+                value={renameDraft.name}
+                autoFocus
+                spellCheck={false}
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) =>
+                  setRenameDraft((prev) =>
+                    prev ? { ...prev, name: event.target.value } : prev
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void handleConfirmRename();
+                  if (event.key === 'Escape') setRenameDraft(null);
+                }}
+              />
+              {renameDraft.extension && (
+                <span className="rename-extension" aria-hidden="true">
+                  {renameDraft.extension}
+                </span>
+              )}
+            </div>
+            <div className="app-modal-actions">
+              <button type="button" className="app-modal-button secondary" onClick={() => setRenameDraft(null)}>
+                {t('button.cancel')}
+              </button>
+              <button type="button" className="app-modal-button primary" onClick={() => void handleConfirmRename()}>
+                {t('button.rename')}
               </button>
             </div>
           </div>
