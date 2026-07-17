@@ -9,6 +9,7 @@ interface ContextMenuProps {
   x: number;
   y: number;
   submenuDirection: SubmenuDirection;
+  submenuVerticalDirection: 'down' | 'up';
   customApps: CustomOpenApp[];
   t: TFunction;
   onCopyImage: () => void;
@@ -28,6 +29,7 @@ export default function ContextMenu({
   x,
   y,
   submenuDirection,
+  submenuVerticalDirection,
   customApps,
   t,
   onCopyImage,
@@ -44,7 +46,9 @@ export default function ContextMenu({
   return (
     <div
       ref={menuRef}
-      className="context-menu"
+      className={`context-menu ${submenuDirection === 'stacked' ? 'stacked' : ''} ${
+        submenuVerticalDirection === 'up' ? 'submenu-up' : ''
+      }`}
       style={{ left: x, top: y }}
       role="menu"
       onContextMenu={(event) => event.preventDefault()}

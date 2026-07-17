@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { LogicalPosition } from '@tauri-apps/api/dpi';
@@ -31,7 +31,6 @@ const ZOOM_STEP = 0.15;
 const SCREEN_FIT_RATIO = 0.92;
 const MIN_WINDOW_SIZE = 200;
 const CONTEXT_MENU_WIDTH = 240;
-const CONTEXT_MENU_MIN_HEIGHT = 190;
 const CONTEXT_SUBMENU_WIDTH = 240;
 const VIEWPORT_MARGIN = 8;
 
@@ -46,6 +45,7 @@ interface ContextMenuState {
   x: number;
   y: number;
   submenuDirection: 'right' | 'left' | 'stacked';
+  submenuVerticalDirection: 'down' | 'up';
 }
 
 interface AppRegistrationDraft {
@@ -714,18 +714,70 @@ function App() {
       }
 
       const maxX = Math.max(VIEWPORT_MARGIN, window.innerWidth - CONTEXT_MENU_WIDTH - VIEWPORT_MARGIN);
-      const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - CONTEXT_MENU_MIN_HEIGHT - VIEWPORT_MARGIN);
+      const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - VIEWPORT_MARGIN);
       const x = Math.max(VIEWPORT_MARGIN, Math.min(event.clientX, maxX));
       const y = Math.max(VIEWPORT_MARGIN, Math.min(event.clientY, maxY));
       const canOpenSubmenuRight =
         x + CONTEXT_MENU_WIDTH + CONTEXT_SUBMENU_WIDTH + VIEWPORT_MARGIN <= window.innerWidth;
       const canOpenSubmenuLeft = x - CONTEXT_SUBMENU_WIDTH - VIEWPORT_MARGIN >= 0;
       const submenuDirection = canOpenSubmenuRight ? 'right' : canOpenSubmenuLeft ? 'left' : 'stacked';
+      const submenuVerticalDirection =
+        event.clientY >= window.innerHeight / 2 ? 'up' : 'down';
 
-      setContextMenu({ x, y, submenuDirection });
+      setContextMenu({ x, y, submenuDirection, submenuVerticalDirection });
     },
     [closeContextMenu, state.currentFilePath, state.errorMessage, state.isLoading]
   );
+
+  // Clamp the rendered menu using its real dimensions. Menu content can grow
+  // when labels or registered custom apps change, so a fixed height estimate
+  // can leave the bottom actions outside the window.
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) return;
+
+    const menu = contextMenuRef.current;
+    const reposition = () => {
+      const rect = menu.getBoundingClientRect();
+      const availableHeight = Math.max(0, window.innerHeight - VIEWPORT_MARGIN * 2);
+      const needsVerticalScroll = rect.height > availableHeight;
+      const visibleHeight = Math.min(rect.height, availableHeight);
+      const maxX = Math.max(
+        VIEWPORT_MARGIN,
+        window.innerWidth - rect.width - VIEWPORT_MARGIN
+      );
+      const maxY = Math.max(
+        VIEWPORT_MARGIN,
+        window.innerHeight - visibleHeight - VIEWPORT_MARGIN
+      );
+      const x = Math.max(VIEWPORT_MARGIN, Math.min(contextMenu.x, maxX));
+      const y = Math.max(VIEWPORT_MARGIN, Math.min(contextMenu.y, maxY));
+      const submenuDirection = needsVerticalScroll
+        ? 'stacked'
+        : contextMenu.submenuDirection;
+
+      if (
+        x !== contextMenu.x ||
+        y !== contextMenu.y ||
+        submenuDirection !== contextMenu.submenuDirection
+      ) {
+        setContextMenu((current) =>
+          current
+            ? {
+                ...current,
+                x,
+                y,
+                submenuDirection,
+              }
+            : current
+        );
+      }
+    };
+
+    reposition();
+    const observer = new ResizeObserver(reposition);
+    observer.observe(menu);
+    return () => observer.disconnect();
+  }, [contextMenu]);
 
   const handleRevealInExplorer = useCallback(async () => {
     closeContextMenu();
@@ -1119,7 +1171,7 @@ function App() {
       if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
         return;
       }
-      if (target.closest('.viewer-image') && e.detail > 1) {
+      if (state.imageSrc && target.closest('.image-container') && e.detail > 1) {
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -1142,7 +1194,7 @@ function App() {
 
       e.preventDefault();
     },
-    [contextMenu, getDragMode, state.panOffset]
+    [contextMenu, getDragMode, state.imageSrc, state.panOffset]
   );
 
   const handleMouseMove = useCallback(
@@ -1274,8 +1326,8 @@ function App() {
     ]
   );
 
-  const handleImageDoubleClick = useCallback(
-    async (event: React.MouseEvent<HTMLImageElement>) => {
+  const handleViewerDoubleClick = useCallback(
+    async (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.stopPropagation();
 
@@ -1692,7 +1744,6 @@ function App() {
           transformOrigin: 'center center',
         }}
         onClick={handleImageClick}
-        onDoubleClick={handleImageDoubleClick}
         draggable={false}
       />
     );
@@ -1712,7 +1763,13 @@ function App() {
       onWheel={handleWheel}
       onContextMenu={handleContextMenu}
     >
-      <div ref={viewerRef} className="image-container">{renderImage()}</div>
+      <div
+        ref={viewerRef}
+        className="image-container"
+        onDoubleClick={handleViewerDoubleClick}
+      >
+        {renderImage()}
+      </div>
 
       {isImageOverflowing && (
         <div className="window-move-zone">
@@ -1772,6 +1829,7 @@ function App() {
           x={contextMenu.x}
           y={contextMenu.y}
           submenuDirection={contextMenu.submenuDirection}
+          submenuVerticalDirection={contextMenu.submenuVerticalDirection}
           customApps={customOpenApps}
           t={t}
           onCopyImage={handleCopyImageFromMenu}

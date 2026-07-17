@@ -207,6 +207,22 @@ html, body, #root {
   z-index: 2;
 }
 
+.context-menu.stacked {
+  max-height: calc(100vh - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.context-menu.submenu-up
+  > .context-menu-parent
+  > .context-submenu:not(.stacked),
+.context-menu.submenu-up .context-submenu.nested:not(.stacked) {
+  top: auto;
+  bottom: -6px;
+}
+
 .context-submenu.right {
   left: calc(100% + 6px);
 }
