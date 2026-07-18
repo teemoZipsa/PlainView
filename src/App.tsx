@@ -33,7 +33,8 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const ZOOM_STEP = 0.15;
 const SCREEN_FIT_RATIO = 0.92;
-const MIN_WINDOW_SIZE = 200;
+const MIN_WINDOW_WIDTH = 280;
+const MIN_WINDOW_HEIGHT = 240;
 const CONTEXT_MENU_WIDTH = 240;
 const CONTEXT_SUBMENU_WIDTH = 240;
 const VIEWPORT_MARGIN = 8;
@@ -492,8 +493,8 @@ function App() {
         }
 
         // Resize window to match image
-        const winW = Math.max(MIN_WINDOW_SIZE, Math.round(naturalW * initialZoom));
-        const winH = Math.max(MIN_WINDOW_SIZE, Math.round(naturalH * initialZoom));
+        const winW = Math.max(MIN_WINDOW_WIDTH, Math.round(naturalW * initialZoom));
+        const winH = Math.max(MIN_WINDOW_HEIGHT, Math.round(naturalH * initialZoom));
 
         try {
           await invoke('resize_window', { width: winW, height: winH });

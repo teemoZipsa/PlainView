@@ -17,20 +17,28 @@ use tauri_plugin_opener::OpenerExt;
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
+    GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, E_INVALIDARG,
+    HWND, LPARAM, LRESULT, WPARAM,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
 };
 #[cfg(windows)]
-use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SHELLEXECUTEINFOW};
+use windows_sys::Win32::UI::Controls::MARGINS;
 #[cfg(windows)]
-use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows_sys::Win32::UI::Shell::{
+    DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, ShellExecuteExW, SEE_MASK_FLAG_NO_UI,
+    SHELLEXECUTEINFOW,
+};
+#[cfg(windows)]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    IsZoomed, SW_SHOWNORMAL, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY,
+};
 
 /// Supported image extensions
 const SUPPORTED_EXTENSIONS: &[&str] = &[
@@ -43,26 +51,100 @@ const UNSUPPORTED_RAW_EXTENSIONS: &[&str] = &["raw", "cr2", "nef", "arw"];
 const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
 const ERROR_NO_ASSOCIATION: u32 = 1155;
 const ERROR_NOT_SAME_DEVICE: i32 = 17;
+#[cfg(windows)]
+const BORDERLESS_SUBCLASS_ID: usize = 0x5056_4E43;
 
 #[cfg(windows)]
-fn hide_native_window_border(window: &WebviewWindow) -> Result<(), String> {
-    let hwnd = window
-        .hwnd()
-        .map_err(|error| format!("Could not access the native window handle: {error}"))?;
+fn hide_native_window_border(hwnd: HWND) -> Result<(), String> {
     let border_color = DWMWA_COLOR_NONE;
     let result = unsafe {
         DwmSetWindowAttribute(
-            hwnd.0,
+            hwnd,
             DWMWA_BORDER_COLOR as u32,
             std::ptr::addr_of!(border_color).cast(),
             std::mem::size_of_val(&border_color) as u32,
         )
     };
 
-    if result < 0 {
+    if result >= 0 || result == E_INVALIDARG {
+        Ok(())
+    } else {
         Err(format!(
             "Could not hide the native window border (HRESULT 0x{:08X})",
             result as u32
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn extend_shadow_frame_into_client_area(hwnd: HWND) -> Result<(), String> {
+    let margins = MARGINS {
+        cxLeftWidth: 1,
+        cxRightWidth: 1,
+        cyTopHeight: 1,
+        cyBottomHeight: 1,
+    };
+    let result = unsafe { DwmExtendFrameIntoClientArea(hwnd, std::ptr::addr_of!(margins)) };
+
+    if result >= 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not enable the native window shadow (HRESULT 0x{:08X})",
+            result as u32
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn full_client_area_result(message: u32, wparam: WPARAM, is_maximized: bool) -> Option<LRESULT> {
+    (message == WM_NCCALCSIZE && wparam != 0 && !is_maximized).then_some(0)
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn borderless_window_subclass(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    subclass_id: usize,
+    _reference_data: usize,
+) -> LRESULT {
+    if let Some(result) = full_client_area_result(message, wparam, unsafe { IsZoomed(hwnd) != 0 }) {
+        return result;
+    }
+
+    if message == WM_DWMCOMPOSITIONCHANGED {
+        let _ = hide_native_window_border(hwnd);
+        let _ = extend_shadow_frame_into_client_area(hwnd);
+    }
+
+    if message == WM_NCDESTROY {
+        unsafe {
+            RemoveWindowSubclass(hwnd, Some(borderless_window_subclass), subclass_id);
+        }
+    }
+
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+}
+
+#[cfg(windows)]
+fn install_native_border_suppression(hwnd: HWND) -> Result<(), String> {
+    hide_native_window_border(hwnd)?;
+    extend_shadow_frame_into_client_area(hwnd)?;
+
+    let installed = unsafe {
+        SetWindowSubclass(
+            hwnd,
+            Some(borderless_window_subclass),
+            BORDERLESS_SUBCLASS_ID,
+            0,
+        )
+    };
+    if installed == 0 {
+        Err(format!(
+            "Could not install native border suppression (Windows error {})",
+            unsafe { GetLastError() }
         ))
     } else {
         Ok(())
@@ -731,7 +813,16 @@ fn set_always_on_top(window: WebviewWindow, on_top: bool) -> Result<(), CommandE
             "window_operation_failed",
             format!("Could not set always-on-top: {}", e),
         )
-    })
+    })?;
+
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        if let Err(error) = hide_native_window_border(hwnd.0) {
+            eprintln!("{error}");
+        }
+    }
+
+    Ok(())
 }
 
 /// Resize the window
@@ -1235,8 +1326,10 @@ pub fn run() {
         .setup(|app| {
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
-                if let Err(error) = hide_native_window_border(&window) {
-                    eprintln!("{error}");
+                if let Ok(hwnd) = window.hwnd() {
+                    if let Err(error) = install_native_border_suppression(hwnd.0) {
+                        eprintln!("{error}");
+                    }
                 }
             }
 
@@ -1269,6 +1362,15 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(windows)]
+    #[test]
+    fn native_border_subclass_expands_the_client_area_over_the_frame() {
+        assert_eq!(full_client_area_result(WM_NCCALCSIZE, 1, false), Some(0));
+        assert_eq!(full_client_area_result(WM_NCCALCSIZE, 0, false), None);
+        assert_eq!(full_client_area_result(WM_NCCALCSIZE, 1, true), None);
+        assert_eq!(full_client_area_result(WM_NCDESTROY, 1, false), None);
+    }
 
     #[test]
     fn minimized_sentinel_bounds_are_not_visible() {
