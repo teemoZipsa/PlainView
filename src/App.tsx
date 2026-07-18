@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
-import { LogicalPosition } from '@tauri-apps/api/dpi';
 import { Image as TauriImage } from '@tauri-apps/api/image';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager';
@@ -13,6 +12,10 @@ import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
 import { commandErrorKeys, detectLocale, translate, type TranslationKey } from './i18n';
+import {
+  exceedsPanBoundary,
+  hasPanOverflow,
+} from './windowGeometry';
 import type {
   ViewerState,
   Rotation,
@@ -22,6 +25,7 @@ import type {
   FitMode,
   CustomOpenApp,
   CommandError,
+  WindowBounds,
 } from './types';
 import './App.css';
 
@@ -139,6 +143,8 @@ function App() {
   const isSavingRef = useRef(false);
   const isRenamingRef = useRef(false);
   const hasDraggedRef = useRef(false);
+  const centerAfterNextResizeRef = useRef(true);
+  const windowBoundsReadyRef = useRef(false);
   const gifPauseRef = useRef<GifPauseState | null>(null);
   const gifClickSequenceRef = useRef<{
     filePath: string;
@@ -376,14 +382,14 @@ function App() {
       let x = panOffset.x;
       let y = panOffset.y;
 
-      if (rendered.width <= viewport.width) {
+      if (!exceedsPanBoundary(rendered.width, viewport.width)) {
         x = 0;
       } else {
         const maxPanX = (rendered.width - viewport.width) / 2;
         x = Math.max(-maxPanX, Math.min(maxPanX, x));
       }
 
-      if (rendered.height <= viewport.height) {
+      if (!exceedsPanBoundary(rendered.height, viewport.height)) {
         y = 0;
       } else {
         const maxPanY = (rendered.height - viewport.height) / 2;
@@ -447,7 +453,7 @@ function App() {
     !!state.imageSrc &&
     viewportSize.width > 0 &&
     viewportSize.height > 0 &&
-    (renderedSize.width > viewportSize.width || renderedSize.height > viewportSize.height);
+    hasPanOverflow(renderedSize, viewportSize);
 
   // ---- Image loading ----
 
@@ -492,19 +498,11 @@ function App() {
         try {
           await invoke('resize_window', { width: winW, height: winH });
 
-          // Apply saved window position if available, otherwise center
-          if (
-            settingsRef.current.rememberWindowPosition &&
-            settingsRef.current.lastWindowBounds
-          ) {
-            const bounds = settingsRef.current.lastWindowBounds;
-            const appWindow = getCurrentWindow();
-            await appWindow.setPosition(
-              new LogicalPosition(bounds.x, bounds.y)
-            );
-          } else {
-            const appWindow = getCurrentWindow();
-            await appWindow.center();
+          // The initial saved placement is restored once during startup. New
+          // images must not snap an already moved window back to an old point.
+          if (centerAfterNextResizeRef.current) {
+            centerAfterNextResizeRef.current = false;
+            await getCurrentWindow().center();
           }
         } catch {
           // Window operations may fail, continue
@@ -1288,7 +1286,7 @@ function App() {
         state.rotation
       );
 
-      if (rendered.width > viewport.width || rendered.height > viewport.height) {
+      if (hasPanOverflow(rendered, viewport)) {
         return 'image-pan';
       }
       return 'window-move';
@@ -1353,14 +1351,14 @@ function App() {
       let newX = panStartRef.current.x + dx;
       let newY = panStartRef.current.y + dy;
 
-      if (rendered.width <= viewport.width) {
+      if (!exceedsPanBoundary(rendered.width, viewport.width)) {
         newX = 0;
       } else {
         const maxPanX = (rendered.width - viewport.width) / 2;
         newX = Math.max(-maxPanX, Math.min(maxPanX, newX));
       }
 
-      if (rendered.height <= viewport.height) {
+      if (!exceedsPanBoundary(rendered.height, viewport.height)) {
         newY = 0;
       } else {
         const maxPanY = (rendered.height - viewport.height) / 2;
@@ -1543,18 +1541,13 @@ function App() {
   );
 
   const saveWindowBounds = useCallback(async () => {
-    if (!settingsRef.current.rememberWindowPosition) return;
+    if (!windowBoundsReadyRef.current || !settingsRef.current.rememberWindowPosition) return;
 
     try {
-      const appWindow = getCurrentWindow();
-      const pos = await appWindow.outerPosition();
-      const size = await appWindow.innerSize();
-      settingsRef.current.lastWindowBounds = {
-        x: pos.x,
-        y: pos.y,
-        width: size.width,
-        height: size.height,
-      };
+      const bounds = await invoke<WindowBounds | null>('get_restorable_window_bounds');
+      if (!bounds) return;
+
+      settingsRef.current.lastWindowBounds = bounds;
       await saveSettings(settingsRef.current);
     } catch {
       // Ignore
@@ -1600,6 +1593,14 @@ function App() {
   });
 
   // ---- Context menu dismissal ----
+
+  useEffect(() => {
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleMouseUp]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -1766,22 +1767,24 @@ function App() {
           setState((prev) => ({ ...prev, isAlwaysOnTop: true }));
         }
 
-        // Apply saved window position/size (restored on startup)
+        // Saved bounds are physical pixels. Restore them through Rust so mixed-DPI
+        // monitor coordinates are never reinterpreted as logical pixels.
         if (normalizedSettings.rememberWindowPosition && normalizedSettings.lastWindowBounds) {
           const bounds = normalizedSettings.lastWindowBounds;
           try {
-            await invoke('resize_window', {
-              width: bounds.width,
-              height: bounds.height,
-            });
-            const appWindow = getCurrentWindow();
-            await appWindow.setPosition(new LogicalPosition(bounds.x, bounds.y));
+            const restored = await invoke<boolean>('restore_window_bounds', { bounds });
+            centerAfterNextResizeRef.current = !restored;
+            if (!restored) {
+              settingsRef.current.lastWindowBounds = null;
+            }
           } catch {
-            // Ignore — will use defaults
+            centerAfterNextResizeRef.current = true;
           }
+        } else {
+          centerAfterNextResizeRef.current = true;
         }
       } catch {
-        // Use defaults
+        centerAfterNextResizeRef.current = true;
       }
 
       // Check CLI args for initial image
@@ -1794,6 +1797,8 @@ function App() {
             (p) => p.toLowerCase() === imagePath.toLowerCase()
           );
           await openImage(imagePath, imageList, Math.max(0, index));
+          windowBoundsReadyRef.current = true;
+          await saveWindowBounds();
           return;
         }
       } catch {
@@ -1802,6 +1807,8 @@ function App() {
 
       // If no image provided, show empty state
       setState((prev) => ({ ...prev, isLoading: false }));
+      windowBoundsReadyRef.current = true;
+      await saveWindowBounds();
     };
 
     init();
@@ -1821,7 +1828,7 @@ function App() {
       state.rotation
     );
 
-    if (rendered.width > viewport.width || rendered.height > viewport.height) {
+    if (hasPanOverflow(rendered, viewport)) {
       return 'grab';
     }
     return 'default';
@@ -1884,7 +1891,7 @@ function App() {
 
   return (
     <div
-      className={`app-container theme-${backgroundMode} ${state.isAlwaysOnTop ? 'pinned' : ''}`}
+      className={`app-container theme-${backgroundMode}`}
       style={{ cursor: getCursorStyle() }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

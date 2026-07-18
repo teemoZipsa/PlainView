@@ -64,6 +64,7 @@ export interface Settings {
 }
 
 export interface WindowBounds {
+  /** Physical desktop coordinates and client size, as returned by Tauri. */
   x: number;
   y: number;
   width: number;

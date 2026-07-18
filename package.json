@@ -1,11 +1,12 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:window-geometry": "node --test tests/windowGeometry.test.ts",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1",

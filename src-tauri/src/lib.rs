@@ -10,7 +10,7 @@ use std::io::{Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
 #[cfg(windows)]
@@ -18,6 +18,10 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
+};
+#[cfg(windows)]
+use windows_sys::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
@@ -39,6 +43,31 @@ const UNSUPPORTED_RAW_EXTENSIONS: &[&str] = &["raw", "cr2", "nef", "arw"];
 const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
 const ERROR_NO_ASSOCIATION: u32 = 1155;
 const ERROR_NOT_SAME_DEVICE: i32 = 17;
+
+#[cfg(windows)]
+fn hide_native_window_border(window: &WebviewWindow) -> Result<(), String> {
+    let hwnd = window
+        .hwnd()
+        .map_err(|error| format!("Could not access the native window handle: {error}"))?;
+    let border_color = DWMWA_COLOR_NONE;
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd.0,
+            DWMWA_BORDER_COLOR as u32,
+            std::ptr::addr_of!(border_color).cast(),
+            std::mem::size_of_val(&border_color) as u32,
+        )
+    };
+
+    if result < 0 {
+        Err(format!(
+            "Could not hide the native window border (HRESULT 0x{:08X})",
+            result as u32
+        ))
+    } else {
+        Ok(())
+    }
+}
 
 fn default_background_mode() -> String {
     "dark".to_string()
@@ -72,12 +101,70 @@ pub struct Settings {
     pub custom_open_apps: Vec<CustomOpenApp>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct WindowBounds {
     pub x: i32,
     pub y: i32,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScreenRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+const MIN_VISIBLE_WINDOW_EDGE: i64 = 48;
+
+fn window_bounds_are_visible(bounds: WindowBounds, screens: &[ScreenRect]) -> bool {
+    if bounds.width == 0 || bounds.height == 0 {
+        return false;
+    }
+
+    let window_left = i64::from(bounds.x);
+    let window_top = i64::from(bounds.y);
+    let window_right = window_left + i64::from(bounds.width);
+    let window_bottom = window_top + i64::from(bounds.height);
+
+    screens.iter().any(|screen| {
+        let screen_left = i64::from(screen.x);
+        let screen_top = i64::from(screen.y);
+        let screen_right = screen_left + i64::from(screen.width);
+        let screen_bottom = screen_top + i64::from(screen.height);
+
+        let visible_width = window_right.min(screen_right) - window_left.max(screen_left);
+        let visible_height = window_bottom.min(screen_bottom) - window_top.max(screen_top);
+
+        visible_width >= MIN_VISIBLE_WINDOW_EDGE && visible_height >= MIN_VISIBLE_WINDOW_EDGE
+    })
+}
+
+fn monitor_work_areas(window: &WebviewWindow) -> Result<Vec<ScreenRect>, CommandError> {
+    window
+        .available_monitors()
+        .map(|monitors| {
+            monitors
+                .into_iter()
+                .map(|monitor| {
+                    let area = monitor.work_area();
+                    ScreenRect {
+                        x: area.position.x,
+                        y: area.position.y,
+                        width: area.size.width,
+                        height: area.size.height,
+                    }
+                })
+                .collect()
+        })
+        .map_err(|e| {
+            command_error(
+                "window_operation_failed",
+                format!("Could not inspect available monitors: {}", e),
+            )
+        })
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -659,6 +746,97 @@ fn resize_window(window: WebviewWindow, width: f64, height: f64) -> Result<(), C
     })
 }
 
+/// Return physical-pixel bounds only while the window is in a normal, visible state.
+/// Windows reports sentinel coordinates for minimized windows, so those values must
+/// never replace the last usable placement.
+#[tauri::command]
+fn get_restorable_window_bounds(
+    window: WebviewWindow,
+) -> Result<Option<WindowBounds>, CommandError> {
+    let is_minimized = window.is_minimized().map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not inspect minimized state: {}", e),
+        )
+    })?;
+    let is_maximized = window.is_maximized().map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not inspect maximized state: {}", e),
+        )
+    })?;
+    let is_fullscreen = window.is_fullscreen().map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not inspect fullscreen state: {}", e),
+        )
+    })?;
+
+    if is_minimized || is_maximized || is_fullscreen {
+        return Ok(None);
+    }
+
+    let position = window.outer_position().map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not read window position: {}", e),
+        )
+    })?;
+    let size = window.inner_size().map_err(|e| {
+        command_error(
+            "window_operation_failed",
+            format!("Could not read window size: {}", e),
+        )
+    })?;
+    let bounds = WindowBounds {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    let screens = monitor_work_areas(&window)?;
+
+    if window_bounds_are_visible(bounds, &screens) {
+        Ok(Some(bounds))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Restore saved physical-pixel bounds only if they still overlap an attached
+/// monitor. This also rejects legacy minimized coordinates such as -32768.
+#[tauri::command]
+fn restore_window_bounds(
+    window: WebviewWindow,
+    bounds: WindowBounds,
+) -> Result<bool, CommandError> {
+    let screens = monitor_work_areas(&window)?;
+    if !window_bounds_are_visible(bounds, &screens) {
+        return Ok(false);
+    }
+
+    // Position first so Windows selects the destination monitor's DPI, then
+    // restore the exact physical client size captured on that monitor.
+    window
+        .set_position(PhysicalPosition::new(bounds.x, bounds.y))
+        .map_err(|e| {
+            command_error(
+                "window_operation_failed",
+                format!("Could not restore window position: {}", e),
+            )
+        })?;
+    window
+        .set_size(PhysicalSize::new(bounds.width, bounds.height))
+        .map_err(|e| {
+            command_error(
+                "window_operation_failed",
+                format!("Could not restore window size: {}", e),
+            )
+        })?;
+
+    Ok(true)
+}
+
 fn io_error_to_command(kind: &str, err: std::io::Error) -> CommandError {
     if err.kind() == std::io::ErrorKind::NotFound {
         return command_error("file_not_found", "File not found.");
@@ -1054,6 +1232,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .setup(|app| {
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = hide_native_window_border(&window) {
+                    eprintln!("{error}");
+                }
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             read_image,
             scan_folder_images,
@@ -1062,6 +1250,8 @@ pub fn run() {
             save_settings,
             set_always_on_top,
             resize_window,
+            get_restorable_window_bounds,
+            restore_window_bounds,
             open_with_default_app,
             move_file_to_folder,
             save_image_as,
@@ -1079,6 +1269,68 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn minimized_sentinel_bounds_are_not_visible() {
+        let screens = [ScreenRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }];
+        let bounds = WindowBounds {
+            x: -32768,
+            y: -32768,
+            width: 800,
+            height: 600,
+        };
+
+        assert!(!window_bounds_are_visible(bounds, &screens));
+    }
+
+    #[test]
+    fn window_spanning_adjacent_monitors_is_visible() {
+        let screens = [
+            ScreenRect {
+                x: 0,
+                y: 0,
+                width: 2560,
+                height: 1440,
+            },
+            ScreenRect {
+                x: 2560,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        ];
+        let bounds = WindowBounds {
+            x: 2500,
+            y: 200,
+            width: 500,
+            height: 500,
+        };
+
+        assert!(window_bounds_are_visible(bounds, &screens));
+    }
+
+    #[test]
+    fn tiny_offscreen_sliver_is_not_restorable() {
+        let screens = [ScreenRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }];
+        let bounds = WindowBounds {
+            x: 1900,
+            y: 1060,
+            width: 800,
+            height: 600,
+        };
+
+        assert!(!window_bounds_are_visible(bounds, &screens));
+    }
 
     fn temp_dir(test_name: &str) -> PathBuf {
         let nanos = SystemTime::now()
