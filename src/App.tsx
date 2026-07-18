@@ -1906,23 +1906,7 @@ function App() {
           onMouseDown={handleMoveMouseDown}
           onMouseEnter={overlay.handleOverlayEnter}
           onMouseLeave={overlay.handleOverlayLeave}
-        >
-          <button
-            type="button"
-            className="window-move-handle"
-            title={t('window.move')}
-            aria-label={t('window.move')}
-          >
-            <svg width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
-              <circle cx="6" cy="3" r="1.4" />
-              <circle cx="12" cy="3" r="1.4" />
-              <circle cx="18" cy="3" r="1.4" />
-              <circle cx="6" cy="9" r="1.4" />
-              <circle cx="12" cy="9" r="1.4" />
-              <circle cx="18" cy="9" r="1.4" />
-            </svg>
-          </button>
-        </div>
+        />
       )}
 
       <OverlayControls
