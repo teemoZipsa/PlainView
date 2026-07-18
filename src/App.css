@@ -131,15 +131,15 @@ html, body, #root {
 .window-move-zone {
   position: absolute;
   top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 96px;
-  height: 44px;
+  left: 0;
+  width: 100%;
+  height: 56px;
   z-index: 20;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   padding-top: 8px;
+  cursor: move;
 }
 
 .window-move-handle {
@@ -157,12 +157,18 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 120ms ease, background-color 180ms ease, color 180ms ease;
+  transform: translateY(-2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
 }
 
 .window-move-zone:hover .window-move-handle,
 .window-move-handle:focus-visible {
   opacity: 1;
+  transform: translateY(0);
 }
 
 .window-move-handle:hover {
@@ -172,6 +178,12 @@ html, body, #root {
 
 .window-move-handle svg {
   fill: currentColor;
+}
+
+@media (max-width: 320px) {
+  .window-move-zone {
+    padding-right: 96px;
+  }
 }
 
 /* ===== Context Menu ===== */

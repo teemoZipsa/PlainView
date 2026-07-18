@@ -444,18 +444,6 @@ function App() {
     [clampPanOffset]
   );
 
-  const renderedSize = getRenderedSize(
-    state.naturalSize.width,
-    state.naturalSize.height,
-    state.zoom,
-    state.rotation
-  );
-  const isImageOverflowing =
-    !!state.imageSrc &&
-    viewportSize.width > 0 &&
-    viewportSize.height > 0 &&
-    hasPanOverflow(renderedSize, viewportSize);
-
   // ---- Image loading ----
 
   const openImage = useCallback(
@@ -1912,14 +1900,18 @@ function App() {
         {renderImage()}
       </div>
 
-      {isImageOverflowing && (
-        <div className="window-move-zone">
+      {!!state.imageSrc && !state.isLoading && !state.errorMessage && (
+        <div
+          className="window-move-zone"
+          onMouseDown={handleMoveMouseDown}
+          onMouseEnter={overlay.handleOverlayEnter}
+          onMouseLeave={overlay.handleOverlayLeave}
+        >
           <button
             type="button"
             className="window-move-handle"
             title={t('window.move')}
             aria-label={t('window.move')}
-            onMouseDown={handleMoveMouseDown}
           >
             <svg width="24" height="12" viewBox="0 0 24 12" aria-hidden="true">
               <circle cx="6" cy="3" r="1.4" />

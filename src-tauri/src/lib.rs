@@ -224,6 +224,32 @@ fn window_bounds_are_visible(bounds: WindowBounds, screens: &[ScreenRect]) -> bo
     })
 }
 
+fn clamp_window_bounds_to_screen(bounds: WindowBounds, screen: ScreenRect) -> WindowBounds {
+    let screen_left = i64::from(screen.x);
+    let screen_top = i64::from(screen.y);
+    let screen_right = screen_left + i64::from(screen.width);
+    let screen_bottom = screen_top + i64::from(screen.height);
+    let window_width = i64::from(bounds.width);
+    let window_height = i64::from(bounds.height);
+
+    let x = if window_width >= i64::from(screen.width) {
+        screen_left
+    } else {
+        i64::from(bounds.x).clamp(screen_left, screen_right - window_width)
+    };
+    let y = if window_height >= i64::from(screen.height) {
+        screen_top
+    } else {
+        i64::from(bounds.y).clamp(screen_top, screen_bottom - window_height)
+    };
+
+    WindowBounds {
+        x: x as i32,
+        y: y as i32,
+        ..bounds
+    }
+}
+
 fn monitor_work_areas(window: &WebviewWindow) -> Result<Vec<ScreenRect>, CommandError> {
     window
         .available_monitors()
@@ -828,13 +854,44 @@ fn set_always_on_top(window: WebviewWindow, on_top: bool) -> Result<(), CommandE
 /// Resize the window
 #[tauri::command]
 fn resize_window(window: WebviewWindow, width: f64, height: f64) -> Result<(), CommandError> {
+    let target_work_area = window.current_monitor().ok().flatten().map(|monitor| {
+        let area = monitor.work_area();
+        ScreenRect {
+            x: area.position.x,
+            y: area.position.y,
+            width: area.size.width,
+            height: area.size.height,
+        }
+    });
+    let original_position = window.outer_position().ok();
+
     let size = tauri::LogicalSize::new(width, height);
     window.set_size(size).map_err(|e| {
         command_error(
             "window_operation_failed",
             format!("Could not resize window: {}", e),
         )
-    })
+    })?;
+
+    if let (Some(screen), Some(original_position), Ok(resized)) =
+        (target_work_area, original_position, window.inner_size())
+    {
+        let bounds = WindowBounds {
+            x: original_position.x,
+            y: original_position.y,
+            width: resized.width,
+            height: resized.height,
+        };
+        let clamped = clamp_window_bounds_to_screen(bounds, screen);
+
+        if clamped.x != bounds.x || clamped.y != bounds.y {
+            if let Err(error) = window.set_position(PhysicalPosition::new(clamped.x, clamped.y)) {
+                eprintln!("Could not keep the resized window on-screen: {error}");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Return physical-pixel bounds only while the window is in a normal, visible state.
@@ -1370,6 +1427,74 @@ mod tests {
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 0, false), None);
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 1, true), None);
         assert_eq!(full_client_area_result(WM_NCDESTROY, 1, false), None);
+    }
+
+    #[test]
+    fn resized_window_is_clamped_inside_its_monitor_work_area() {
+        let screen = ScreenRect {
+            x: 0,
+            y: 0,
+            width: 5120,
+            height: 1392,
+        };
+        let bounds = WindowBounds {
+            x: 3881,
+            y: 283,
+            width: 2049,
+            height: 1281,
+        };
+
+        assert_eq!(
+            clamp_window_bounds_to_screen(bounds, screen),
+            WindowBounds {
+                x: 3071,
+                y: 111,
+                ..bounds
+            }
+        );
+    }
+
+    #[test]
+    fn resized_window_keeps_an_already_valid_position() {
+        let screen = ScreenRect {
+            x: -2560,
+            y: 0,
+            width: 2560,
+            height: 1440,
+        };
+        let bounds = WindowBounds {
+            x: -1800,
+            y: 120,
+            width: 800,
+            height: 600,
+        };
+
+        assert_eq!(clamp_window_bounds_to_screen(bounds, screen), bounds);
+    }
+
+    #[test]
+    fn oversized_window_anchors_to_the_monitor_origin() {
+        let screen = ScreenRect {
+            x: 5120,
+            y: -200,
+            width: 1920,
+            height: 1080,
+        };
+        let bounds = WindowBounds {
+            x: 6000,
+            y: 400,
+            width: 2400,
+            height: 1200,
+        };
+
+        assert_eq!(
+            clamp_window_bounds_to_screen(bounds, screen),
+            WindowBounds {
+                x: 5120,
+                y: -200,
+                ..bounds
+            }
+        );
     }
 
     #[test]
