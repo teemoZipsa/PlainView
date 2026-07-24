@@ -10,11 +10,14 @@ interface KeyboardShortcutsProps {
   onFitScreen: () => void;
   onToggleAlwaysOnTop: () => void;
   onRotate: () => void;
-  canCopyImage: () => boolean;
   onCopyImage: () => void;
+  onCopyFile: () => void;
   onMoveFile: () => void;
   onMoveToTrash: () => void;
   onSaveAs: () => void;
+  onRename: () => void;
+  onPrint: () => void;
+  onShowProperties: () => void;
   isEnabled?: () => boolean;
 }
 
@@ -37,6 +40,15 @@ function isCopyShortcut(e: KeyboardEvent): boolean {
   );
 }
 
+function isFileCopyShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 'c' &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.altKey &&
+    e.shiftKey
+  );
+}
+
 function isMoveShortcut(e: KeyboardEvent): boolean {
   return (
     e.key.toLowerCase() === 'm' &&
@@ -53,6 +65,19 @@ function isSaveShortcut(e: KeyboardEvent): boolean {
     !e.altKey &&
     !e.shiftKey
   );
+}
+
+function isPrintShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 'p' &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  );
+}
+
+function isPropertiesShortcut(e: KeyboardEvent): boolean {
+  return e.key === 'Enter' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 }
 
 export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
@@ -74,11 +99,15 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         return;
       }
 
+      if (isFileCopyShortcut(e)) {
+        e.preventDefault();
+        p.onCopyFile();
+        return;
+      }
+
       if (isCopyShortcut(e)) {
-        if (p.canCopyImage()) {
-          e.preventDefault();
-          p.onCopyImage();
-        }
+        e.preventDefault();
+        p.onCopyImage();
         return;
       }
 
@@ -91,6 +120,18 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
       if (isSaveShortcut(e)) {
         e.preventDefault();
         p.onSaveAs();
+        return;
+      }
+
+      if (isPrintShortcut(e)) {
+        e.preventDefault();
+        p.onPrint();
+        return;
+      }
+
+      if (isPropertiesShortcut(e)) {
+        e.preventDefault();
+        p.onShowProperties();
         return;
       }
 
@@ -107,6 +148,10 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         case 'Delete':
           e.preventDefault();
           p.onMoveToTrash();
+          break;
+        case 'F2':
+          e.preventDefault();
+          p.onRename();
           break;
         case 'ArrowRight':
         case ' ': // Space

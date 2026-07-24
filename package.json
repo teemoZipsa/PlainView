@@ -1,11 +1,14 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.3",
+  "version": "0.7.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test:context-menu": "node --test tests/contextMenuGeometry.test.ts",
+    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx",
+    "test:image-canvas": "node --test tests/imageCanvas.test.ts",
     "test:window-geometry": "node --test tests/windowGeometry.test.ts",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -25,7 +28,9 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^29.1.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
   }
 }

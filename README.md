@@ -37,9 +37,13 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 | `F` | Fit to screen |
 | `T` | Toggle always on top |
 | `R` | Rotate 90 degrees clockwise |
-| `Ctrl+C` | Copy image |
+| `Ctrl+C` | Copy image contents |
+| `Ctrl+Shift+C` | Copy the file object |
 | `Ctrl+S` | Save as |
 | `Ctrl+M` | Move to another folder |
+| `Ctrl+P` | Print |
+| `F2` | Rename |
+| `Alt+Enter` | File properties |
 | `Delete` | Move to Recycle Bin |
 
 ## Features
@@ -51,8 +55,9 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Image panning** - drag to pan while zoomed in
 - **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
 - **Window dragging** - drag the image area in default mode, or use the top handle / Alt-drag while zoomed
-- **Context menu** - copy the image or file path, show in Explorer, open with the default app, save as, rename, register/open custom apps, move to Recycle Bin, print
-- **Image copy** - copy the current image to the clipboard with `Ctrl+C` or the context menu
+- **Context menu** - copy image contents, the file object, or its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, or print with PlainView's built-in print dialog
+- **Image content copy** - copy the current image pixels with `Ctrl+C` or the context menu
+- **File copy** - copy the current image as a file object with `Ctrl+Shift+C` or the context menu so it can be pasted into File Explorer, mail, and other compatible apps
 - **File path copy** - copy the current image's full path from the context menu
 - **Save as** - save the original image file with `Ctrl+S` or the context menu
 - **Rename** - rename the current image while preserving its file extension
@@ -98,7 +103,7 @@ npm run release:windows
 - File association must be configured manually after installation through Windows default app settings.
 - PlainView is view-only and does not include image editing tools.
 - GIF support is limited to click-to-pause and click-to-resume. Frame-by-frame navigation is not supported.
-- Images are loaded as base64 with a 5-image LRU cache.
+- Formats the WebView cannot render directly are converted to PNG and loaded as base64 data, with a 5-image LRU cache for converted results.
 
 ## License
 

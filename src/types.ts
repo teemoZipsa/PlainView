@@ -39,8 +39,6 @@ export type CommandErrorKind =
   | 'settings_save_failed'
   | 'window_operation_failed'
   | 'custom_app_not_found'
-  | 'print_failed'
-  | 'print_unsupported'
   | 'image_load_failed'
   | 'image_size_failed'
   | 'unknown';

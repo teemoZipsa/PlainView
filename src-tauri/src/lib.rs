@@ -32,8 +32,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 use windows_sys::Win32::UI::Controls::MARGINS;
 #[cfg(windows)]
 use windows_sys::Win32::UI::Shell::{
-    DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, ShellExecuteExW, SEE_MASK_FLAG_NO_UI,
-    SHELLEXECUTEINFOW,
+    DefSubclassProc, RemoveWindowSubclass, SHObjectProperties, SHOpenWithDialog, SetWindowSubclass,
+    ShellExecuteExW, OAIF_EXEC, OPENASINFO, SEE_MASK_FLAG_NO_UI, SHELLEXECUTEINFOW, SHOP_FILEPATH,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -53,6 +53,8 @@ const ERROR_NO_ASSOCIATION: u32 = 1155;
 const ERROR_NOT_SAME_DEVICE: i32 = 17;
 #[cfg(windows)]
 const BORDERLESS_SUBCLASS_ID: usize = 0x5056_4E43;
+#[cfg(windows)]
+const HRESULT_ERROR_CANCELLED: i32 = 0x8007_04C7u32 as i32;
 
 #[cfg(windows)]
 fn hide_native_window_border(hwnd: HWND) -> Result<(), String> {
@@ -403,11 +405,105 @@ fn open_with_shell_execute(path: &Path) -> Result<(), CommandError> {
 }
 
 #[cfg(windows)]
-fn print_with_shell_execute(path: &Path) -> Result<(), CommandError> {
-    shell_execute(path, Some("print")).map_err(|error| match error.kind.as_str() {
-        "file_not_found" | "access_denied" => error,
-        _ => command_error("print_failed", error.message),
-    })
+fn copy_file_path_to_clipboard(path: &Path) -> Result<(), CommandError> {
+    let path_text = path_to_string(path)?;
+    let _clipboard = clipboard_win::Clipboard::new_attempts(10).map_err(|error| {
+        command_error(
+            "file_clipboard_failed",
+            format!("Could not open the Windows clipboard: {error}"),
+        )
+    })?;
+
+    clipboard_win::raw::set_file_list_with(&[path_text.as_str()], clipboard_win::options::DoClear)
+        .map_err(|error| {
+            command_error(
+                "file_clipboard_failed",
+                format!("Could not place the file on the Windows clipboard: {error}"),
+            )
+        })?;
+
+    // Explorer recognizes CF_HDROP on its own. Preferred DropEffect makes the
+    // intended copy operation explicit for shell consumers that inspect it.
+    if let Some(format) = clipboard_win::register_format("Preferred DropEffect") {
+        let copy_effect = 1u32.to_le_bytes();
+        let _ = clipboard_win::raw::set_without_clear(format.get(), &copy_effect);
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn copy_file_path_to_clipboard(_path: &Path) -> Result<(), CommandError> {
+    Err(command_error(
+        "platform_unsupported",
+        "Copying a file object is only supported on Windows.",
+    ))
+}
+
+#[cfg(windows)]
+fn open_with_windows_dialog(hwnd: HWND, path: &Path) -> Result<(), CommandError> {
+    let file_wide = to_wide_null(path.as_os_str());
+    let open_as_info = OPENASINFO {
+        pcszFile: file_wide.as_ptr(),
+        pcszClass: std::ptr::null(),
+        oaifInFlags: OAIF_EXEC,
+    };
+    let result = unsafe { SHOpenWithDialog(hwnd, std::ptr::addr_of!(open_as_info)) };
+
+    if shell_dialog_result_succeeded(result) {
+        Ok(())
+    } else {
+        Err(command_error(
+            "open_with_failed",
+            format!(
+                "Could not open the Windows Open With dialog (HRESULT 0x{:08X}).",
+                result as u32
+            ),
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn shell_dialog_result_succeeded(result: i32) -> bool {
+    result >= 0 || result == HRESULT_ERROR_CANCELLED
+}
+
+#[cfg(not(windows))]
+fn open_with_windows_dialog(_hwnd: usize, _path: &Path) -> Result<(), CommandError> {
+    Err(command_error(
+        "platform_unsupported",
+        "The Open With dialog is only supported on Windows.",
+    ))
+}
+
+#[cfg(windows)]
+fn show_windows_file_properties(hwnd: HWND, path: &Path) -> Result<(), CommandError> {
+    let file_wide = to_wide_null(path.as_os_str());
+    let invoked = unsafe {
+        SHObjectProperties(
+            hwnd,
+            SHOP_FILEPATH as u32,
+            file_wide.as_ptr(),
+            std::ptr::null(),
+        )
+    };
+
+    if invoked != 0 {
+        Ok(())
+    } else {
+        Err(command_error(
+            "properties_failed",
+            "Could not open the Windows file properties dialog.",
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+fn show_windows_file_properties(_hwnd: usize, _path: &Path) -> Result<(), CommandError> {
+    Err(command_error(
+        "platform_unsupported",
+        "The file properties dialog is only supported on Windows.",
+    ))
 }
 
 #[cfg(not(windows))]
@@ -1115,6 +1211,66 @@ fn open_with_default_app(app: AppHandle, path: String) -> Result<(), CommandErro
 }
 
 #[tauri::command]
+fn copy_file_to_clipboard(path: String) -> Result<(), CommandError> {
+    let file = PathBuf::from(&path);
+    if !file.is_file() {
+        return Err(command_error("file_not_found", "Image file not found."));
+    }
+
+    copy_file_path_to_clipboard(&file)
+}
+
+#[tauri::command]
+fn show_open_with_dialog(window: WebviewWindow, path: String) -> Result<(), CommandError> {
+    let file = PathBuf::from(&path);
+    if !file.is_file() {
+        return Err(command_error("file_not_found", "Image file not found."));
+    }
+
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|error| {
+            command_error(
+                "open_with_failed",
+                format!("Could not access the viewer window: {error}"),
+            )
+        })?;
+        open_with_windows_dialog(hwnd.0, &file)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        open_with_windows_dialog(0, &file)
+    }
+}
+
+#[tauri::command]
+fn show_file_properties(window: WebviewWindow, path: String) -> Result<(), CommandError> {
+    let file = PathBuf::from(&path);
+    if !file.is_file() {
+        return Err(command_error("file_not_found", "Image file not found."));
+    }
+
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|error| {
+            command_error(
+                "properties_failed",
+                format!("Could not access the viewer window: {error}"),
+            )
+        })?;
+        show_windows_file_properties(hwnd.0, &file)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        show_windows_file_properties(0, &file)
+    }
+}
+
+#[tauri::command]
 fn move_file_to_folder(file_path: String, target_folder: String) -> Result<String, CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
@@ -1347,27 +1503,6 @@ fn open_with_custom_app(file_path: String, executable_path: String) -> Result<()
     Ok(())
 }
 
-#[tauri::command]
-fn print_file(path: String) -> Result<(), CommandError> {
-    let file = PathBuf::from(&path);
-    if !file.is_file() {
-        return Err(command_error("file_not_found", "File to print not found."));
-    }
-
-    #[cfg(windows)]
-    {
-        print_with_shell_execute(&file)
-    }
-
-    #[cfg(not(windows))]
-    {
-        Err(command_error(
-            "print_unsupported",
-            "Printing is not supported on this platform.",
-        ))
-    }
-}
-
 /// Get CLI arguments (for file association)
 #[tauri::command]
 fn get_cli_args() -> Vec<String> {
@@ -1403,12 +1538,14 @@ pub fn run() {
             get_restorable_window_bounds,
             restore_window_bounds,
             open_with_default_app,
+            copy_file_to_clipboard,
+            show_open_with_dialog,
+            show_file_properties,
             move_file_to_folder,
             save_image_as,
             rename_file,
             move_file_to_trash,
             open_with_custom_app,
-            print_file,
             get_cli_args,
         ])
         .run(tauri::generate_context!())
@@ -1427,6 +1564,14 @@ mod tests {
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 0, false), None);
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 1, true), None);
         assert_eq!(full_client_area_result(WM_NCDESTROY, 1, false), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_a_shell_dialog_is_not_reported_as_a_failure() {
+        assert!(shell_dialog_result_succeeded(0));
+        assert!(shell_dialog_result_succeeded(HRESULT_ERROR_CANCELLED));
+        assert!(!shell_dialog_result_succeeded(0x8000_4005u32 as i32));
     }
 
     #[test]

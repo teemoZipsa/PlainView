@@ -138,12 +138,17 @@ html, body, #root {
   cursor: move;
 }
 
+.print-surface {
+  display: none;
+}
+
 /* ===== Context Menu ===== */
 
 .context-menu,
 .context-submenu {
   position: absolute;
   width: min(240px, calc(100vw - 16px));
+  box-sizing: border-box;
   padding: 6px;
   color: var(--text-primary);
   background-color: var(--surface-panel);
@@ -164,13 +169,44 @@ html, body, #root {
   display: none;
   top: -6px;
   z-index: 2;
-}
-
-.context-menu.stacked {
   max-height: calc(100vh - 16px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-soft) transparent;
+}
+
+.context-menu {
+  max-height: calc(100vh - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-soft) transparent;
+}
+
+.context-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-menu::-webkit-scrollbar-track,
+.context-submenu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.context-menu::-webkit-scrollbar-thumb,
+.context-submenu::-webkit-scrollbar-thumb {
+  background: var(--border-soft);
+  border-radius: 999px;
+}
+
+.context-submenu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-menu.stacked {
+  width: calc(100vw - 16px);
   scrollbar-gutter: stable;
 }
 
@@ -192,10 +228,14 @@ html, body, #root {
 
 .context-submenu.stacked {
   position: static;
-  width: 100%;
-  flex-basis: 100%;
-  margin-top: 5px;
+  width: calc(100% - 8px);
+  margin: 2px 4px 6px;
+  padding: 4px;
+  background-color: var(--interactive-hover);
+  border-color: var(--border-subtle);
   box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .context-submenu.nested {
@@ -204,7 +244,6 @@ html, body, #root {
 
 .context-menu-parent {
   position: relative;
-  flex-wrap: wrap;
 }
 
 .context-menu-parent::after {
@@ -232,8 +271,9 @@ html, body, #root {
   display: block;
 }
 
-.context-menu-parent:hover > .context-submenu,
-.context-menu-parent:focus-within > .context-submenu {
+.context-menu-parent:not(.submenu-stacked):hover > .context-submenu,
+.context-menu-parent:not(.submenu-stacked):focus-within > .context-submenu,
+.context-submenu.stacked.is-open {
   display: block;
 }
 
@@ -258,6 +298,15 @@ html, body, #root {
   white-space: nowrap;
 }
 
+.context-menu.stacked .context-menu-item {
+  min-height: 34px;
+  white-space: normal;
+}
+
+.context-menu.stacked .context-submenu .context-menu-item {
+  padding-left: 12px;
+}
+
 .context-menu-item:hover,
 .context-menu-item:focus-visible {
   background-color: var(--interactive-hover);
@@ -273,14 +322,34 @@ html, body, #root {
   cursor: default;
 }
 
-.context-menu-item.disabled:hover {
+.context-menu-item.disabled:hover,
+.context-menu-item:disabled:hover {
   background-color: transparent;
+}
+
+.context-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.context-menu-shortcut {
+  margin-left: 18px;
+  color: var(--text-faint);
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .context-menu-arrow {
   color: var(--text-faint);
   font-size: 16px;
   line-height: 1;
+  transition: transform 140ms ease;
+}
+
+.context-menu.stacked .context-menu-arrow.open {
+  transform: rotate(90deg);
 }
 
 .context-menu-divider {
@@ -431,6 +500,69 @@ html, body, #root {
   filter: brightness(1.12);
 }
 
+.registered-app-list {
+  display: flex;
+  max-height: min(280px, calc(100vh - 180px));
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.registered-app-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background-color: var(--surface-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+}
+
+.registered-app-details {
+  min-width: 0;
+  flex: 1;
+}
+
+.registered-app-name,
+.registered-app-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registered-app-name {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.registered-app-path {
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.registered-app-remove {
+  min-width: 52px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--text-primary);
+  background-color: var(--danger);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.registered-app-remove:hover,
+.registered-app-remove:focus-visible {
+  background-color: var(--danger-hover);
+  outline: none;
+}
+
 .toast-message {
   position: absolute;
   left: 50%;
@@ -448,6 +580,10 @@ html, body, #root {
   font-size: 12px;
   font-weight: 500;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   pointer-events: none;
   box-shadow: var(--shadow-panel);
   transition:
@@ -455,6 +591,89 @@ html, body, #root {
     color 180ms ease,
     border-color 180ms ease,
     box-shadow 180ms ease;
+}
+
+.toast-icon {
+  display: none;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.toast-success {
+  border-color: rgba(34, 197, 94, 0.54);
+}
+
+.toast-success .toast-icon {
+  display: inline-flex;
+  color: #ffffff;
+  background: rgba(22, 163, 74, 0.92);
+}
+
+.toast-error {
+  border-color: rgba(239, 68, 68, 0.58);
+}
+
+.toast-error .toast-icon {
+  display: inline-flex;
+  color: #ffffff;
+  background: rgba(220, 38, 38, 0.92);
+}
+
+.toast-progress::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border: 2px solid var(--spinner-track);
+  border-top-color: var(--spinner-head);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  #root,
+  .app-container {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: visible;
+    background: #ffffff !important;
+  }
+
+  .app-container > :not(.print-surface) {
+    display: none !important;
+  }
+
+  .print-surface {
+    display: flex !important;
+    width: 100%;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+  }
+
+  .print-canvas {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100vh;
+    object-fit: contain;
+  }
 }
 
 /* ===== Overlay Container ===== */
