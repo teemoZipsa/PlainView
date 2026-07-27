@@ -1,3 +1,5 @@
+import type { LocalePreference } from './types';
+
 export type Locale = 'ko' | 'en';
 
 export const translations = {
@@ -10,6 +12,9 @@ export const translations = {
     'button.save': '저장',
     'button.rename': '이름 바꾸기',
     'button.remove': '제거',
+    'button.retry': '다시 시도',
+    'button.nextImage': '다음 이미지',
+    'button.showInFolder': '폴더에서 보기',
     'dialog.moveFolderTitle': '이동할 폴더 선택',
     'dialog.customAppTitle': '사용자 정의 앱 선택',
     'dialog.executableFilter': '실행 파일',
@@ -21,6 +26,24 @@ export const translations = {
     'modal.removeAppMessage': '{name} 항목을 제거할까요?',
     'modal.renameTitle': '이름 바꾸기',
     'modal.renameLabel': '새 파일 이름',
+    'settings.title': '설정',
+    'settings.description': 'PlainView의 기본 탐색 동작과 표시 방식을 선택합니다.',
+    'settings.language': '언어',
+    'settings.languageSystem': '시스템 설정',
+    'settings.languageKorean': '한국어',
+    'settings.languageEnglish': 'English',
+    'settings.defaultView': '새 이미지 기본 보기',
+    'settings.viewAuto': '자동',
+    'settings.viewFit': '창에 맞춤 유지',
+    'settings.viewOriginal': '원본 크기',
+    'settings.overlayDelay': '컨트롤 숨김 시간',
+    'settings.delayOneSecond': '1초',
+    'settings.delayTwoSeconds': '2초',
+    'settings.delayFourSeconds': '4초',
+    'settings.loopNavigation': '폴더 끝에서 반복 탐색',
+    'settings.loopNavigationDescription': '마지막 이미지 다음에 첫 이미지로 이동합니다.',
+    'settings.rememberWindow': '창 위치 기억',
+    'settings.rememberWindowDescription': '다음 실행 때 마지막 창 위치를 복원합니다.',
     'menu.copyImage': '이미지 내용 복사',
     'menu.copyFile': '파일 복사',
     'menu.copyPath': '파일 경로 복사',
@@ -40,6 +63,8 @@ export const translations = {
     'menu.print': '인쇄...',
     'overlay.switchToLight': '라이트 모드로 전환',
     'overlay.switchToDark': '다크 모드로 전환',
+    'overlay.settingsTitle': '설정',
+    'overlay.settingsAria': 'PlainView 설정 열기',
     'overlay.unpin': '고정 해제 (T)',
     'overlay.pin': '항상 위 고정 (T)',
     'overlay.unpinAria': '항상 위 고정 해제',
@@ -110,6 +135,7 @@ export const translations = {
     'toast.printUnavailable': '이미지가 준비된 뒤 다시 인쇄해 주세요.',
     'toast.printFailed': '인쇄 창을 열 수 없습니다.',
     'toast.gifPauseFailed': '이 GIF는 일시정지할 수 없습니다.',
+    'toast.settingsSaved': '설정을 저장했습니다.',
     'error.fileNotFound': '파일을 찾을 수 없습니다.',
     'error.targetNotFolder': '이동할 폴더를 찾을 수 없습니다.',
     'error.sameFolder': '이미 같은 폴더에 있습니다.',
@@ -155,6 +181,9 @@ export const translations = {
     'button.save': 'Save',
     'button.rename': 'Rename',
     'button.remove': 'Remove',
+    'button.retry': 'Retry',
+    'button.nextImage': 'Next image',
+    'button.showInFolder': 'Show in folder',
     'dialog.moveFolderTitle': 'Select a folder to move to',
     'dialog.customAppTitle': 'Select a custom app',
     'dialog.executableFilter': 'Executable files',
@@ -166,6 +195,24 @@ export const translations = {
     'modal.removeAppMessage': 'Remove {name}?',
     'modal.renameTitle': 'Rename',
     'modal.renameLabel': 'New file name',
+    'settings.title': 'Settings',
+    'settings.description': 'Choose PlainView’s default navigation and display behavior.',
+    'settings.language': 'Language',
+    'settings.languageSystem': 'System default',
+    'settings.languageKorean': '한국어',
+    'settings.languageEnglish': 'English',
+    'settings.defaultView': 'Default view for new images',
+    'settings.viewAuto': 'Automatic',
+    'settings.viewFit': 'Keep fitted to window',
+    'settings.viewOriginal': 'Original size',
+    'settings.overlayDelay': 'Control hide delay',
+    'settings.delayOneSecond': '1 second',
+    'settings.delayTwoSeconds': '2 seconds',
+    'settings.delayFourSeconds': '4 seconds',
+    'settings.loopNavigation': 'Loop at the end of a folder',
+    'settings.loopNavigationDescription': 'Continue from the last image to the first.',
+    'settings.rememberWindow': 'Remember window position',
+    'settings.rememberWindowDescription': 'Restore the last window position on the next launch.',
     'menu.copyImage': 'Copy image contents',
     'menu.copyFile': 'Copy file',
     'menu.copyPath': 'Copy file path',
@@ -185,6 +232,8 @@ export const translations = {
     'menu.print': 'Print...',
     'overlay.switchToLight': 'Switch to light mode',
     'overlay.switchToDark': 'Switch to dark mode',
+    'overlay.settingsTitle': 'Settings',
+    'overlay.settingsAria': 'Open PlainView settings',
     'overlay.unpin': 'Unpin (T)',
     'overlay.pin': 'Always on top (T)',
     'overlay.unpinAria': 'Turn off always on top',
@@ -255,6 +304,7 @@ export const translations = {
     'toast.printUnavailable': 'Wait for the image to finish loading, then try again.',
     'toast.printFailed': 'Could not open the print dialog.',
     'toast.gifPauseFailed': 'This GIF cannot be paused.',
+    'toast.settingsSaved': 'Settings saved.',
     'error.fileNotFound': 'File not found.',
     'error.targetNotFolder': 'Could not find the target folder.',
     'error.sameFolder': 'The file is already in that folder.',
@@ -338,7 +388,9 @@ export function isSupportedLocale(value: string | null | undefined): value is Lo
   return value === 'ko' || value === 'en';
 }
 
-export function detectLocale(): Locale {
+export function detectLocale(preference: LocalePreference = 'system'): Locale {
+  if (preference === 'ko' || preference === 'en') return preference;
+
   const queryLocale = new URLSearchParams(window.location.search).get('lang');
   if (isSupportedLocale(queryLocale)) return queryLocale;
 

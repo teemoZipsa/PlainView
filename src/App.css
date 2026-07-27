@@ -389,6 +389,84 @@ html, body, #root {
   width: min(340px, calc(100vw - 32px));
 }
 
+.settings-modal {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(140px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-select {
+  width: 100%;
+  height: 32px;
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  padding: 0 9px;
+  color: var(--text-primary);
+  background-color: var(--surface-input);
+  outline: none;
+  font: inherit;
+}
+
+.settings-select:focus-visible {
+  border-color: var(--accent-ring);
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  color: var(--text-primary);
+  background-color: var(--surface-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+.settings-toggle span,
+.settings-toggle strong,
+.settings-toggle small {
+  display: block;
+}
+
+.settings-toggle span {
+  min-width: 0;
+}
+
+.settings-toggle strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-toggle small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .app-modal-title {
   font-size: 15px;
   font-weight: 600;
@@ -1000,7 +1078,15 @@ html, body, #root {
   color: var(--text-muted);
 }
 
-.error-close-btn {
+.error-actions {
+  display: flex;
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.error-action-btn {
   background-color: var(--surface-input-active);
   border: 1px solid var(--border-control);
   color: var(--text-secondary);
@@ -1016,9 +1102,23 @@ html, body, #root {
     border-color 180ms ease;
 }
 
-.error-close-btn:hover {
+.error-action-btn.primary {
+  color: var(--text-primary);
+  background-color: var(--accent);
+  border-color: transparent;
+}
+
+.error-action-btn:hover,
+.error-action-btn:focus-visible {
   background-color: var(--surface-overlay-hover);
   border-color: var(--border-subtle);
+  outline: none;
+}
+
+.error-action-btn.primary:hover,
+.error-action-btn.primary:focus-visible {
+  background-color: var(--accent-strong);
+  border-color: transparent;
 }
 
 /* ===== Empty View ===== */
@@ -1041,6 +1141,24 @@ html, body, #root {
   font-size: 14px;
   font-weight: 400;
   color: var(--text-faint);
+}
+
+@media (max-width: 360px) {
+  .settings-field {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ===== Scrollbar Hide ===== */

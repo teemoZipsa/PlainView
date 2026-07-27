@@ -5,11 +5,21 @@ interface ErrorViewProps {
   message: string;
   t: TFunction;
   onClose: () => void;
+  onRetry?: () => void;
+  onNext?: () => void;
+  onReveal?: () => void;
 }
 
-const ErrorView: React.FC<ErrorViewProps> = ({ message, t, onClose }) => {
+const ErrorView: React.FC<ErrorViewProps> = ({
+  message,
+  t,
+  onClose,
+  onRetry,
+  onNext,
+  onReveal,
+}) => {
   return (
-    <div className="error-view">
+    <div className="error-view" onMouseDown={(event) => event.stopPropagation()}>
       <div className="error-icon">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -19,9 +29,26 @@ const ErrorView: React.FC<ErrorViewProps> = ({ message, t, onClose }) => {
         </svg>
       </div>
       <p className="error-message">{message}</p>
-      <button type="button" className="error-close-btn" onClick={onClose}>
-        {t('button.close')}
-      </button>
+      <div className="error-actions">
+        {onRetry && (
+          <button type="button" className="error-action-btn primary" onClick={onRetry}>
+            {t('button.retry')}
+          </button>
+        )}
+        {onNext && (
+          <button type="button" className="error-action-btn" onClick={onNext}>
+            {t('button.nextImage')}
+          </button>
+        )}
+        {onReveal && (
+          <button type="button" className="error-action-btn" onClick={onReveal}>
+            {t('button.showInFolder')}
+          </button>
+        )}
+        <button type="button" className="error-action-btn" onClick={onClose}>
+          {t('button.close')}
+        </button>
+      </div>
     </div>
   );
 };

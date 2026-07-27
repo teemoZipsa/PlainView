@@ -18,6 +18,7 @@ interface KeyboardShortcutsProps {
   onRename: () => void;
   onPrint: () => void;
   onShowProperties: () => void;
+  onReload: () => void;
   isEnabled?: () => boolean;
 }
 
@@ -152,6 +153,10 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         case 'F2':
           e.preventDefault();
           p.onRename();
+          break;
+        case 'F5':
+          e.preventDefault();
+          p.onReload();
           break;
         case 'ArrowRight':
         case ' ': // Space

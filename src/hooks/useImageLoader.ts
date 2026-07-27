@@ -1,6 +1,10 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { useCallback } from 'react';
 import type { CommandError, LoadedImageData, Settings } from '../types';
+import {
+  RevisionLruCache,
+  type ImageRevision,
+} from '../imageCache';
 
 // ---- LRU Cache with size limit ----
 
@@ -11,42 +15,21 @@ interface CachedImage {
   fileName: string;
   filePath: string;
   fileSize: number;
+  modifiedTimeMs: number;
   originalExtension: string | null;
 }
 
-/** Ordered map: oldest -> newest. When full, evict the oldest entry. */
-const preloadCache = new Map<string, CachedImage>();
+const preloadCache = new RevisionLruCache<CachedImage>(MAX_CACHE_SIZE);
 
-function cacheSet(key: string, value: CachedImage) {
-  // If the key already exists, delete and re-insert to move it to the end (most recent)
-  if (preloadCache.has(key)) {
-    preloadCache.delete(key);
-  }
-  // Evict oldest if at capacity
-  while (preloadCache.size >= MAX_CACHE_SIZE) {
-    const oldestKey = preloadCache.keys().next().value;
-    if (oldestKey !== undefined) {
-      preloadCache.delete(oldestKey);
-    } else {
-      break;
-    }
-  }
-  preloadCache.set(key, value);
-}
-
-function cacheGet(key: string): CachedImage | undefined {
-  const value = preloadCache.get(key);
-  if (value !== undefined) {
-    // Move to end (most recently used)
-    preloadCache.delete(key);
-    preloadCache.set(key, value);
-  }
-  return value;
-}
+const revisionFromData = (data: LoadedImageData): ImageRevision => ({
+  fileSize: data.fileSize,
+  modifiedTimeMs: data.modifiedTimeMs,
+});
 
 function buildImageSource(data: LoadedImageData): string {
   if (data.sourceKind === 'file') {
-    return convertFileSrc(data.filePath);
+    const revision = `${data.modifiedTimeMs}-${data.fileSize}`;
+    return `${convertFileSrc(data.filePath)}?plainviewRevision=${revision}`;
   }
 
   if (!data.base64) {
@@ -79,8 +62,8 @@ export function useImageLoader() {
     naturalWidth: number;
     naturalHeight: number;
   }> => {
-    // Check LRU cache first
-    const cached = cacheGet(filePath);
+    const revision = await invoke<ImageRevision>('get_image_revision', { path: filePath });
+    const cached = preloadCache.get(filePath, revision);
     if (cached) {
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -102,12 +85,12 @@ export function useImageLoader() {
       const data = await invoke<LoadedImageData>('read_image', { path: filePath });
       const src = buildImageSource(data);
 
-      // LRU cache set (auto-evicts oldest if full)
-      cacheSet(filePath, {
+      preloadCache.set(filePath, revisionFromData(data), {
         src,
         fileName: data.fileName,
         filePath: data.filePath,
         fileSize: data.fileSize,
+        modifiedTimeMs: data.modifiedTimeMs,
         originalExtension: data.originalExtension,
       });
 
@@ -136,20 +119,22 @@ export function useImageLoader() {
 
   const preloadImages = useCallback(async (paths: string[]) => {
     for (const p of paths) {
-      if (!preloadCache.has(p)) {
-        try {
-          const data = await invoke<LoadedImageData>('read_image', { path: p });
-          const src = buildImageSource(data);
-          cacheSet(p, {
-            src,
-            fileName: data.fileName,
-            filePath: data.filePath,
-            fileSize: data.fileSize,
-            originalExtension: data.originalExtension,
-          });
-        } catch {
-          // Silently skip failed preloads
-        }
+      try {
+        const revision = await invoke<ImageRevision>('get_image_revision', { path: p });
+        if (preloadCache.isCurrent(p, revision)) continue;
+
+        const data = await invoke<LoadedImageData>('read_image', { path: p });
+        const src = buildImageSource(data);
+        preloadCache.set(p, revisionFromData(data), {
+          src,
+          fileName: data.fileName,
+          filePath: data.filePath,
+          fileSize: data.fileSize,
+          modifiedTimeMs: data.modifiedTimeMs,
+          originalExtension: data.originalExtension,
+        });
+      } catch {
+        // Silently skip failed preloads
       }
     }
   }, []);
@@ -171,6 +156,15 @@ export function useImageLoader() {
         settings.defaultFitMode === 'fit' || settings.defaultFitMode === 'original'
           ? settings.defaultFitMode
           : 'auto',
+      locale:
+        settings.locale === 'ko' || settings.locale === 'en'
+          ? settings.locale
+          : 'system',
+      overlayHideDelayMs:
+        typeof settings.overlayHideDelayMs === 'number' &&
+        [1000, 2000, 4000].includes(settings.overlayHideDelayMs)
+          ? settings.overlayHideDelayMs
+          : 2000,
       lastWindowBounds: settings.lastWindowBounds ?? null,
       customOpenApps: settings.customOpenApps ?? [],
     };
@@ -188,6 +182,15 @@ export function useImageLoader() {
     preloadCache.delete(filePath);
   }, []);
 
+  const isImageStale = useCallback(async (filePath: string) => {
+    try {
+      const revision = await invoke<ImageRevision>('get_image_revision', { path: filePath });
+      return !preloadCache.isCurrent(filePath, revision);
+    } catch {
+      return true;
+    }
+  }, []);
+
   return {
     loadImage,
     preloadImages,
@@ -196,5 +199,6 @@ export function useImageLoader() {
     saveSettings,
     getCliArgs,
     invalidateImage,
+    isImageStale,
   };
 }

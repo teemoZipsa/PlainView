@@ -5,6 +5,7 @@ export interface LoadedImageData {
   fileName: string;
   filePath: string;
   fileSize: number;
+  modifiedTimeMs: number;
   originalExtension: string | null;
   width: number | null;
   height: number | null;
@@ -49,17 +50,28 @@ export interface CommandError {
 }
 
 export type BackgroundMode = 'dark' | 'light';
+export type LocalePreference = 'system' | 'ko' | 'en';
 
 export interface Settings {
   rememberWindowPosition: boolean;
   alwaysOnTopDefault: boolean;
   loopNavigation: boolean;
   backgroundMode: BackgroundMode;
-  /** @future Stored for forward compatibility — not yet applied in UI. */
   defaultFitMode: FitMode;
+  locale: LocalePreference;
+  overlayHideDelayMs: number;
   lastWindowBounds: WindowBounds | null;
   customOpenApps: CustomOpenApp[];
 }
+
+export type SettingsDraft = Pick<
+  Settings,
+  | 'rememberWindowPosition'
+  | 'loopNavigation'
+  | 'defaultFitMode'
+  | 'locale'
+  | 'overlayHideDelayMs'
+>;
 
 export interface WindowBounds {
   /** Physical desktop coordinates and client size, as returned by Tauri. */

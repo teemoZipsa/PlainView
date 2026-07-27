@@ -26,6 +26,7 @@ const callbacks = () => ({
   onRename: vi.fn(),
   onPrint: vi.fn(),
   onShowProperties: vi.fn(),
+  onReload: vi.fn(),
 });
 
 type ShortcutCallbacks = ReturnType<typeof callbacks>;
@@ -78,12 +79,14 @@ describe('useKeyboardShortcuts', () => {
     press('c', { ctrlKey: true, shiftKey: true });
     press('p', { ctrlKey: true });
     press('F2');
+    press('F5');
     press('Enter', { altKey: true });
 
     expect(handlers.onCopyImage).toHaveBeenCalledTimes(1);
     expect(handlers.onCopyFile).toHaveBeenCalledTimes(1);
     expect(handlers.onPrint).toHaveBeenCalledTimes(1);
     expect(handlers.onRename).toHaveBeenCalledTimes(1);
+    expect(handlers.onReload).toHaveBeenCalledTimes(1);
     expect(handlers.onShowProperties).toHaveBeenCalledTimes(1);
   });
 

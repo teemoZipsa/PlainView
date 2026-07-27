@@ -30,6 +30,7 @@ interface OverlayControlsProps {
   onFitScreen: () => void;
   onToggleAlwaysOnTop: () => void;
   onToggleBackgroundMode: () => void;
+  onOpenSettings: () => void;
   onRotate: () => void;
   onOverlayEnter: () => void;
   onOverlayLeave: () => void;
@@ -55,6 +56,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   onFitScreen,
   onToggleAlwaysOnTop,
   onToggleBackgroundMode,
+  onOpenSettings,
   onRotate,
   onOverlayEnter,
   onOverlayLeave,
@@ -144,7 +146,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       onMouseEnter={onOverlayEnter}
       onMouseLeave={onOverlayLeave}
     >
-      {/* Top-right: theme + pin + close */}
+      {/* Top-right: theme + pin + settings + close */}
       <div className="overlay-top-right">
         <button
           type="button"
@@ -193,6 +195,27 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
                 <path d="M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16h14v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a1 1 0 001-1V4a1 1 0 00-1-1H8a1 1 0 00-1 1v1a1 1 0 001 1h1v4.76z" />
               </>
             )}
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="overlay-btn settings-btn"
+          onClick={(e) => handleButtonClick(e, onOpenSettings)}
+          title={t('overlay.settingsTitle')}
+          aria-label={t('overlay.settingsAria')}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.35.3.56.72.6 1.18V13.6h-.09A1.7 1.7 0 0 0 19.4 15Z" />
           </svg>
         </button>
         <button

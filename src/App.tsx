@@ -8,6 +8,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
+import SettingsModal from './components/SettingsModal';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
@@ -33,6 +34,7 @@ import type {
   CustomOpenApp,
   CommandError,
   WindowBounds,
+  SettingsDraft,
 } from './types';
 import './App.css';
 
@@ -72,6 +74,12 @@ interface RenameDraft {
 interface GifPauseState {
   filePath: string;
   pausedSrc: string;
+}
+
+interface FailedLoadState {
+  filePath: string;
+  imageList: string[];
+  index: number;
 }
 
 type ToastTone = 'neutral' | 'progress' | 'success' | 'error';
@@ -117,10 +125,13 @@ function App() {
   const [renameDraft, setRenameDraft] = useState<RenameDraft | null>(null);
   const [isCustomAppManagerOpen, setIsCustomAppManagerOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
+  const [failedLoad, setFailedLoad] = useState<FailedLoadState | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
+  const [overlayHideDelayMs, setOverlayHideDelayMs] = useState(2000);
   const [gifPause, setGifPause] = useState<GifPauseState | null>(null);
-  const [locale] = useState(detectLocale);
+  const [locale, setLocale] = useState(detectLocale);
   const t = useCallback(
     (key: TranslationKey, values?: Record<string, string | number>) =>
       translate(locale, key, values),
@@ -131,9 +142,11 @@ function App() {
     rememberWindowPosition: true,
     alwaysOnTopDefault: false,
     loopNavigation: true,
-    // Future settings — stored for forward compatibility but not yet applied in UI
+    // Keep the latest persisted defaults available to image and overlay handlers.
     backgroundMode: 'dark',
     defaultFitMode: 'auto',
+    locale: 'system',
+    overlayHideDelayMs: 2000,
     lastWindowBounds: null,
     customOpenApps: [],
   });
@@ -167,9 +180,15 @@ function App() {
     initialPause: GifPauseState | null;
     count: number;
   } | null>(null);
+  const viewerStateRef = useRef(state);
+  const failedLoadRef = useRef(failedLoad);
+  const focusRefreshRef = useRef<() => Promise<void>>(async () => {});
 
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
+
+  viewerStateRef.current = state;
+  failedLoadRef.current = failedLoad;
 
   const {
     loadImage,
@@ -179,9 +198,10 @@ function App() {
     saveSettings,
     getCliArgs,
     invalidateImage,
+    isImageStale,
   } = useImageLoader();
 
-  const overlay = useOverlayVisibility();
+  const overlay = useOverlayVisibility(overlayHideDelayMs);
 
   // ---- Utility functions ----
 
@@ -457,6 +477,7 @@ function App() {
   const openImage = useCallback(
     async (filePath: string, imageList?: string[], index?: number) => {
       const myRequestId = ++requestIdRef.current;
+      setFailedLoad(null);
       updateGifPause(null);
       gifClickSequenceRef.current = null;
 
@@ -511,6 +532,14 @@ function App() {
         // Use the TARGET window size for fit zoom calculation,
         // not window.innerWidth which may not have updated yet
         const fitZoom = calculateFitZoomForSize(naturalW, naturalH, 0, winW, winH);
+        const defaultFitMode = settingsRef.current.defaultFitMode;
+        const displayZoom = defaultFitMode === 'original' ? 1 : fitZoom;
+        const displayFitMode: FitMode =
+          defaultFitMode === 'fit'
+            ? 'fit'
+            : defaultFitMode === 'original'
+              ? 'original'
+              : 'auto';
 
         setState((prev) => ({
           ...prev,
@@ -522,8 +551,8 @@ function App() {
           fileSize: result.fileSize,
           originalExtension: result.originalExtension,
           naturalSize: { width: naturalW, height: naturalH },
-          zoom: fitZoom,
-          fitMode: 'auto',
+          zoom: displayZoom,
+          fitMode: displayFitMode,
           panOffset: { x: 0, y: 0 },
           rotation: 0,
           isLoading: false,
@@ -543,6 +572,13 @@ function App() {
         // Stale request guard on error path too
         if (requestIdRef.current !== myRequestId) return;
 
+        const failedList = imageList ?? state.imageList;
+        const failedIndex = index ?? state.currentIndex;
+        setFailedLoad({
+          filePath,
+          imageList: failedList.length > 0 ? failedList : [filePath],
+          index: Math.max(0, failedIndex),
+        });
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -560,6 +596,102 @@ function App() {
       updateGifPause,
     ]
   );
+
+  const retryFailedImage = useCallback(() => {
+    if (!failedLoad) return;
+    invalidateImage(failedLoad.filePath);
+    void openImage(failedLoad.filePath, failedLoad.imageList, failedLoad.index);
+  }, [failedLoad, invalidateImage, openImage]);
+
+  const openNextAfterError = useCallback(() => {
+    if (!failedLoad || failedLoad.imageList.length <= 1) return;
+
+    let nextIndex = failedLoad.index + 1;
+    if (nextIndex >= failedLoad.imageList.length) {
+      if (!settingsRef.current.loopNavigation) return;
+      nextIndex = 0;
+    }
+    void openImage(
+      failedLoad.imageList[nextIndex],
+      failedLoad.imageList,
+      nextIndex
+    );
+  }, [failedLoad, openImage]);
+
+  const revealFailedImage = useCallback(() => {
+    if (!failedLoad) return;
+    void revealItemInDir(failedLoad.filePath).catch(() => {
+      showToast(t('toast.revealFailed'), 'error');
+    });
+  }, [failedLoad, showToast, t]);
+
+  const refreshCurrentFolder = useCallback(
+    async (forceReload = false) => {
+      const snapshot = viewerStateRef.current;
+      const failed = failedLoadRef.current;
+      const currentPath = failed?.filePath ?? snapshot.currentFilePath;
+      if (!currentPath) return;
+
+      try {
+        const imageList = await scanFolder(currentPath);
+        const currentIndex = imageList.findIndex(
+          (path) => path.toLowerCase() === currentPath.toLowerCase()
+        );
+
+        if (currentIndex < 0) {
+          invalidateImage(currentPath);
+
+          if (imageList.length === 0) {
+            setFailedLoad({
+              filePath: currentPath,
+              imageList: [currentPath],
+              index: 0,
+            });
+            setState((previous) => ({
+              ...previous,
+              isLoading: false,
+              errorMessage: t('error.fileNotFound'),
+            }));
+            return;
+          }
+
+          const previousIndex = failed?.index ?? snapshot.currentIndex;
+          const fallbackIndex = Math.min(
+            Math.max(previousIndex, 0),
+            imageList.length - 1
+          );
+          await openImage(imageList[fallbackIndex], imageList, fallbackIndex);
+          return;
+        }
+
+        setState((previous) => {
+          if (
+            !previous.currentFilePath ||
+            previous.currentFilePath.toLowerCase() !== currentPath.toLowerCase()
+          ) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            imageList,
+            currentIndex,
+          };
+        });
+
+        const stale = forceReload || (await isImageStale(currentPath));
+        if (stale) {
+          if (forceReload) invalidateImage(currentPath);
+          await openImage(currentPath, imageList, currentIndex);
+        }
+      } catch {
+        // Keep the current image usable when a background refresh cannot read the folder.
+      }
+    },
+    [invalidateImage, isImageStale, openImage, scanFolder, t]
+  );
+
+  focusRefreshRef.current = () => refreshCurrentFolder(false);
 
   // ---- Tauri native drag-and-drop ----
   // Use a ref so the listener callback always reads the latest scanFolder/openImage
@@ -699,6 +831,30 @@ function App() {
       console.warn('Failed to save background mode setting.', error);
     });
   }, [backgroundMode, saveSettings]);
+
+  const saveViewerSettings = useCallback(
+    async (draft: SettingsDraft) => {
+      const nextSettings: Settings = {
+        ...settingsRef.current,
+        ...draft,
+        lastWindowBounds: draft.rememberWindowPosition
+          ? settingsRef.current.lastWindowBounds
+          : null,
+      };
+
+      try {
+        await saveSettings(nextSettings);
+        settingsRef.current = nextSettings;
+        setLocale(detectLocale(nextSettings.locale));
+        setOverlayHideDelayMs(nextSettings.overlayHideDelayMs);
+        setIsSettingsOpen(false);
+        showToast(t('toast.settingsSaved'), 'success');
+      } catch (error) {
+        showToast(getErrorMessage(error, 'error.settingsSaveFailed'), 'error');
+      }
+    },
+    [getErrorMessage, saveSettings, showToast, t]
+  );
 
   // ---- Close ----
 
@@ -1704,11 +1860,15 @@ function App() {
     onShowProperties: () => {
       void handleShowFileProperties();
     },
+    onReload: () => {
+      void refreshCurrentFolder(true);
+    },
     isEnabled: () =>
       !contextMenu &&
       !registrationDraft &&
       !renameDraft &&
       !isCustomAppManagerOpen &&
+      !isSettingsOpen &&
       !removeTarget &&
       !isNativeDialogOpenRef.current,
   });
@@ -1865,6 +2025,37 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Refresh the folder list and cached image revision whenever the user returns
+  // from Explorer or an editor. This keeps external additions, deletions, and
+  // same-path replacements in sync without a permanent file watcher.
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenFn: (() => void) | null = null;
+
+    const setup = async () => {
+      try {
+        const unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused) void focusRefreshRef.current();
+        });
+
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlistenFn = unlisten;
+        }
+      } catch {
+        // Focus events are unavailable in the browser-only development view.
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      if (unlistenFn) unlistenFn();
+    };
+  }, []);
+
   // ---- Initial load ----
 
   useEffect(() => {
@@ -1880,6 +2071,8 @@ function App() {
 
         settingsRef.current = normalizedSettings;
         setBackgroundMode(normalizedMode);
+        setLocale(detectLocale(normalizedSettings.locale));
+        setOverlayHideDelayMs(normalizedSettings.overlayHideDelayMs);
         setCustomOpenApps(normalizedSettings.customOpenApps ?? []);
 
         // Apply always-on-top default
@@ -1967,7 +2160,23 @@ function App() {
     }
 
     if (state.errorMessage) {
-      return <ErrorView message={state.errorMessage} t={t} onClose={closeApp} />;
+      return (
+        <ErrorView
+          message={state.errorMessage}
+          t={t}
+          onClose={closeApp}
+          onRetry={failedLoad ? retryFailedImage : undefined}
+          onNext={
+            failedLoad &&
+            failedLoad.imageList.length > 1 &&
+            (settingsRef.current.loopNavigation ||
+              failedLoad.index < failedLoad.imageList.length - 1)
+              ? openNextAfterError
+              : undefined
+          }
+          onReveal={failedLoad ? revealFailedImage : undefined}
+        />
+      );
     }
 
     if (!state.imageSrc) {
@@ -2045,36 +2254,39 @@ function App() {
         />
       )}
 
-      <OverlayControls
-        isVisible={overlay.isVisible}
-        isAlwaysOnTop={state.isAlwaysOnTop}
-        backgroundMode={backgroundMode}
-        currentIndex={state.currentIndex}
-        totalImages={state.imageList.length}
-        zoom={state.zoom}
-        fileName={state.fileName}
-        imageInfo={{
-          filePath: state.currentFilePath,
-          fileSize: state.fileSize,
-          width: state.naturalSize.width,
-          height: state.naturalSize.height,
-          originalExtension: state.originalExtension,
-        }}
-        t={t}
-        onClose={closeApp}
-        onPrevImage={() => navigateImage(-1)}
-        onNextImage={() => navigateImage(1)}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onSetZoom={setZoomWithCenter}
-        onOriginalSize={setOriginalSize}
-        onFitScreen={fitToScreen}
-        onToggleAlwaysOnTop={toggleAlwaysOnTop}
-        onToggleBackgroundMode={toggleBackgroundMode}
-        onRotate={rotate}
-        onOverlayEnter={overlay.handleOverlayEnter}
-        onOverlayLeave={overlay.handleOverlayLeave}
-      />
+      {!state.errorMessage && (
+        <OverlayControls
+          isVisible={overlay.isVisible}
+          isAlwaysOnTop={state.isAlwaysOnTop}
+          backgroundMode={backgroundMode}
+          currentIndex={state.currentIndex}
+          totalImages={state.imageList.length}
+          zoom={state.zoom}
+          fileName={state.fileName}
+          imageInfo={{
+            filePath: state.currentFilePath,
+            fileSize: state.fileSize,
+            width: state.naturalSize.width,
+            height: state.naturalSize.height,
+            originalExtension: state.originalExtension,
+          }}
+          t={t}
+          onClose={closeApp}
+          onPrevImage={() => navigateImage(-1)}
+          onNextImage={() => navigateImage(1)}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onSetZoom={setZoomWithCenter}
+          onOriginalSize={setOriginalSize}
+          onFitScreen={fitToScreen}
+          onToggleAlwaysOnTop={toggleAlwaysOnTop}
+          onToggleBackgroundMode={toggleBackgroundMode}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onRotate={rotate}
+          onOverlayEnter={overlay.handleOverlayEnter}
+          onOverlayLeave={overlay.handleOverlayLeave}
+        />
+      )}
 
       {contextMenu && (
         <ContextMenu
@@ -2257,6 +2469,23 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {isSettingsOpen && (
+        <SettingsModal
+          initialSettings={{
+            rememberWindowPosition: settingsRef.current.rememberWindowPosition,
+            loopNavigation: settingsRef.current.loopNavigation,
+            defaultFitMode: settingsRef.current.defaultFitMode,
+            locale: settingsRef.current.locale,
+            overlayHideDelayMs: settingsRef.current.overlayHideDelayMs,
+          }}
+          t={t}
+          onCancel={() => setIsSettingsOpen(false)}
+          onSave={(draft) => {
+            void saveViewerSettings(draft);
+          }}
+        />
       )}
 
       {toast && (

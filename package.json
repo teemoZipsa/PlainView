@@ -1,13 +1,14 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.4",
+  "version": "0.7.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "test:context-menu": "node --test tests/contextMenuGeometry.test.ts",
-    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx",
+    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx tests/SettingsModal.test.tsx tests/ErrorView.test.tsx",
+    "test:image-cache": "node --test tests/imageCache.test.ts",
     "test:image-canvas": "node --test tests/imageCanvas.test.ts",
     "test:window-geometry": "node --test tests/windowGeometry.test.ts",
     "preview": "vite preview",

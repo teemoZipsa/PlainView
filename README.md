@@ -45,12 +45,14 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 | `F2` | Rename |
 | `Alt+Enter` | File properties |
 | `Delete` | Move to Recycle Bin |
+| `F5` | Refresh the current folder and image |
 
 ## Features
 
 - **Borderless window** - a minimal UI that keeps the image as the main surface
 - **Hover overlay** - translucent controls appear only when needed and auto-hide after 2 seconds
-- **Folder navigation** - automatically lists images in the same folder for previous/next navigation
+- **Natural folder navigation** - lists same-folder images in human-friendly `1, 2, 10` order for previous/next navigation
+- **External change refresh** - rechecks added, deleted, and replaced files plus the image cache when returning from another app
 - **Zoom controls** - zoom with the mouse wheel, keyboard, or buttons
 - **Image panning** - drag to pan while zoomed in
 - **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
@@ -68,7 +70,9 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Always on top** - keep the image above other windows
 - **Rotation and direct zoom input** - view-only 90-degree rotation and numeric zoom entry from the bottom scale label
 - **Drag and drop** - open an image by dropping it into the window
-- **Settings persistence** - automatically saves window position, always-on-top state, and related settings
+- **Recoverable error view** - continue with Retry, Next image, or Show in folder actions
+- **Compact settings panel** - configure language, default view, looping, remembered position, and control hide delay
+- **Settings persistence** - automatically saves window position, always-on-top state, and viewing preferences
 
 ## Tech Stack
 

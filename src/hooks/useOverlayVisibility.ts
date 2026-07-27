@@ -1,8 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 
-const HIDE_DELAY = 2000; // 2 seconds
-
-export function useOverlayVisibility() {
+export function useOverlayVisibility(hideDelayMs = 2000) {
   const [isVisible, setIsVisible] = useState(false);
   const isOnOverlayRef = useRef(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -20,8 +18,8 @@ export function useOverlayVisibility() {
       if (!isOnOverlayRef.current) {
         setIsVisible(false);
       }
-    }, HIDE_DELAY);
-  }, [clearHideTimer]);
+    }, hideDelayMs);
+  }, [clearHideTimer, hideDelayMs]);
 
   const showOverlay = useCallback(() => {
     setIsVisible(true);

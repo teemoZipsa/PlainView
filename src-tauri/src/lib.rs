@@ -4,12 +4,14 @@ use image::{
     ImageFormat, ImageReader,
 };
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
@@ -161,6 +163,14 @@ fn default_fit_mode() -> String {
     "auto".to_string()
 }
 
+fn default_locale() -> String {
+    "system".to_string()
+}
+
+fn default_overlay_hide_delay_ms() -> u32 {
+    2000
+}
+
 fn default_true() -> bool {
     true
 }
@@ -179,6 +189,10 @@ pub struct Settings {
     pub background_mode: String,
     #[serde(default = "default_fit_mode")]
     pub default_fit_mode: String,
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    #[serde(default = "default_overlay_hide_delay_ms")]
+    pub overlay_hide_delay_ms: u32,
     #[serde(default)]
     pub last_window_bounds: Option<WindowBounds>,
     #[serde(default)]
@@ -293,6 +307,8 @@ impl Default for Settings {
             loop_navigation: true,
             background_mode: default_background_mode(),
             default_fit_mode: default_fit_mode(),
+            locale: default_locale(),
+            overlay_hide_delay_ms: default_overlay_hide_delay_ms(),
             last_window_bounds: None,
             custom_open_apps: Vec::new(),
         }
@@ -309,9 +325,17 @@ pub struct ImageData {
     pub file_name: String,
     pub file_path: String,
     pub file_size: u64,
+    pub modified_time_ms: u64,
     pub original_extension: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRevision {
+    pub file_size: u64,
+    pub modified_time_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -599,6 +623,36 @@ fn uses_original_file_source(ext: &str) -> bool {
     )
 }
 
+fn revision_from_metadata(metadata: &fs::Metadata) -> FileRevision {
+    let modified_time_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .unwrap_or(0);
+
+    FileRevision {
+        file_size: metadata.len(),
+        modified_time_ms,
+    }
+}
+
+fn file_revision(path: &Path) -> Result<FileRevision, CommandError> {
+    let metadata = fs::metadata(path).map_err(|e| {
+        command_error(
+            "metadata_failed",
+            format!("Could not read file info: {}", e),
+        )
+    })?;
+
+    Ok(revision_from_metadata(&metadata))
+}
+
+#[tauri::command]
+fn get_image_revision(path: String) -> Result<FileRevision, CommandError> {
+    file_revision(Path::new(&path))
+}
+
 fn encode_png(image: DynamicImage) -> Result<DecodedImage, CommandError> {
     let (width, height) = image.dimensions();
     let mut cursor = Cursor::new(Vec::new());
@@ -776,14 +830,7 @@ fn read_image(path: String) -> Result<ImageData, CommandError> {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
 
-    let file_size = fs::metadata(&file_path)
-        .map_err(|e| {
-            command_error(
-                "metadata_failed",
-                format!("Could not read file info: {}", e),
-            )
-        })?
-        .len();
+    let revision = file_revision(&file_path)?;
 
     let (source_kind, base64, mime_type, width, height) = if uses_original_file_source(&ext) {
         (
@@ -810,11 +857,114 @@ fn read_image(path: String) -> Result<ImageData, CommandError> {
         mime_type,
         file_name,
         file_path: file_path.to_string_lossy().to_string(),
-        file_size,
+        file_size: revision.file_size,
+        modified_time_ms: revision.modified_time_ms,
         original_extension,
         width,
         height,
     })
+}
+
+fn natural_case_insensitive_cmp(left: &str, right: &str) -> Ordering {
+    let left_folded = left.to_lowercase();
+    let right_folded = right.to_lowercase();
+    let left_bytes = left_folded.as_bytes();
+    let right_bytes = right_folded.as_bytes();
+    let mut left_index = 0;
+    let mut right_index = 0;
+
+    while left_index < left_bytes.len() && right_index < right_bytes.len() {
+        let left_is_digit = left_bytes[left_index].is_ascii_digit();
+        let right_is_digit = right_bytes[right_index].is_ascii_digit();
+
+        if left_is_digit && right_is_digit {
+            let left_end = left_bytes[left_index..]
+                .iter()
+                .position(|byte| !byte.is_ascii_digit())
+                .map(|offset| left_index + offset)
+                .unwrap_or(left_bytes.len());
+            let right_end = right_bytes[right_index..]
+                .iter()
+                .position(|byte| !byte.is_ascii_digit())
+                .map(|offset| right_index + offset)
+                .unwrap_or(right_bytes.len());
+
+            let left_digits = &left_bytes[left_index..left_end];
+            let right_digits = &right_bytes[right_index..right_end];
+            let left_trimmed = {
+                let first_non_zero = left_digits
+                    .iter()
+                    .position(|byte| *byte != b'0')
+                    .unwrap_or(left_digits.len().saturating_sub(1));
+                &left_digits[first_non_zero..]
+            };
+            let right_trimmed = {
+                let first_non_zero = right_digits
+                    .iter()
+                    .position(|byte| *byte != b'0')
+                    .unwrap_or(right_digits.len().saturating_sub(1));
+                &right_digits[first_non_zero..]
+            };
+
+            match left_trimmed.len().cmp(&right_trimmed.len()) {
+                Ordering::Equal => {}
+                order => return order,
+            }
+            match left_trimmed.cmp(right_trimmed) {
+                Ordering::Equal => {}
+                order => return order,
+            }
+            match left_digits.len().cmp(&right_digits.len()) {
+                Ordering::Equal => {}
+                order => return order,
+            }
+
+            left_index = left_end;
+            right_index = right_end;
+            continue;
+        }
+
+        if left_is_digit != right_is_digit {
+            return left_bytes[left_index].cmp(&right_bytes[right_index]);
+        }
+
+        let left_end = left_bytes[left_index..]
+            .iter()
+            .position(|byte| byte.is_ascii_digit())
+            .map(|offset| left_index + offset)
+            .unwrap_or(left_bytes.len());
+        let right_end = right_bytes[right_index..]
+            .iter()
+            .position(|byte| byte.is_ascii_digit())
+            .map(|offset| right_index + offset)
+            .unwrap_or(right_bytes.len());
+
+        match left_bytes[left_index..left_end].cmp(&right_bytes[right_index..right_end]) {
+            Ordering::Equal => {}
+            order => return order,
+        }
+
+        left_index = left_end;
+        right_index = right_end;
+    }
+
+    left_bytes
+        .len()
+        .cmp(&right_bytes.len())
+        .then_with(|| left.cmp(right))
+}
+
+fn natural_file_path_cmp(left: &str, right: &str) -> Ordering {
+    let left_name = Path::new(left)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let right_name = Path::new(right)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+
+    natural_case_insensitive_cmp(left_name, right_name)
 }
 
 /// Scan a folder for supported image files, sorted by filename ascending
@@ -847,20 +997,7 @@ fn scan_folder_images(folder_path: String) -> Result<Vec<String>, CommandError> 
         }
     }
 
-    // Sort by filename ascending (case-insensitive)
-    images.sort_by(|a, b| {
-        let name_a = Path::new(a)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let name_b = Path::new(b)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        name_a.cmp(&name_b)
-    });
+    images.sort_by(|left, right| natural_file_path_cmp(left, right));
 
     Ok(images)
 }
@@ -1529,6 +1666,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             read_image,
+            get_image_revision,
             scan_folder_images,
             get_parent_folder,
             load_settings,
@@ -1555,7 +1693,55 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
+
+    #[test]
+    fn natural_sort_keeps_numbered_images_in_explorer_order() {
+        let mut paths = vec![
+            r"C:\images\photo10.png".to_string(),
+            r"C:\images\photo2.png".to_string(),
+            r"C:\images\photo01.png".to_string(),
+            r"C:\images\photo1.png".to_string(),
+        ];
+
+        paths.sort_by(|left, right| natural_file_path_cmp(left, right));
+
+        assert_eq!(
+            paths,
+            vec![
+                r"C:\images\photo1.png",
+                r"C:\images\photo01.png",
+                r"C:\images\photo2.png",
+                r"C:\images\photo10.png",
+            ]
+        );
+    }
+
+    #[test]
+    fn file_revision_changes_when_file_size_changes() {
+        let dir = temp_dir("revision");
+        let path = dir.join("image.png");
+        fs::write(&path, b"one").unwrap();
+        let before = file_revision(&path).unwrap();
+
+        fs::write(&path, b"longer image bytes").unwrap();
+        let after = file_revision(&path).unwrap();
+
+        assert_ne!(before.file_size, after.file_size);
+        assert_ne!(before, after);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_settings_receive_new_viewer_defaults() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+
+        assert_eq!(settings.locale, "system");
+        assert_eq!(settings.overlay_hide_delay_ms, 2000);
+        assert_eq!(settings.default_fit_mode, "auto");
+        assert!(settings.loop_navigation);
+        assert!(settings.remember_window_position);
+    }
 
     #[cfg(windows)]
     #[test]
