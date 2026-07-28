@@ -26,6 +26,7 @@ interface ContextMenuProps {
   onRegisterApp: () => void;
   onManageApps: () => void;
   onPrint: () => void;
+  onDismiss: () => void;
 }
 
 export default function ContextMenu({
@@ -51,6 +52,7 @@ export default function ContextMenu({
   onRegisterApp,
   onManageApps,
   onPrint,
+  onDismiss,
 }: ContextMenuProps) {
   const [openSections, setOpenSections] = useState({ open: false, files: false });
   const firstItemRef = useRef<HTMLButtonElement>(null);
@@ -61,7 +63,59 @@ export default function ContextMenu({
   }, []);
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const target = event.target as HTMLElement;
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      onDismiss();
+      return;
+    }
+
+    if (event.key === 'ArrowRight') {
+      const trigger = target.closest<HTMLButtonElement>(
+        'button.context-menu-item[aria-haspopup="menu"]'
+      );
+      if (!trigger) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      const section = trigger.dataset.menuSection as 'open' | 'files';
+      if (isStacked) {
+        setOpenSections(
+          section === 'open'
+            ? { open: true, files: false }
+            : { open: false, files: true }
+        );
+      }
+      globalThis.setTimeout(() => {
+        trigger.parentElement
+          ?.querySelector<HTMLButtonElement>(
+            ':scope > .context-submenu button.context-menu-item:not(:disabled)'
+          )
+          ?.focus({ preventScroll: true });
+      }, 0);
+      return;
+    }
+
+    if (event.key === 'ArrowLeft') {
+      const submenu = target.closest<HTMLElement>('.context-submenu');
+      const parent = submenu?.parentElement?.closest<HTMLElement>('.context-menu-parent');
+      const trigger = parent?.querySelector<HTMLButtonElement>(
+        ':scope > button.context-menu-item[aria-haspopup="menu"]'
+      );
+      if (!trigger) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (isStacked) {
+        setOpenSections({ open: false, files: false });
+      }
+      trigger.focus({ preventScroll: true });
+      return;
+    }
+
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Tab'].includes(event.key)) return;
 
     const items = Array.from(
       event.currentTarget.querySelectorAll<HTMLButtonElement>('.context-menu-item')
@@ -73,9 +127,9 @@ export default function ContextMenu({
     let nextIndex = 0;
     if (event.key === 'End') {
       nextIndex = items.length - 1;
-    } else if (event.key === 'ArrowDown') {
+    } else if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
       nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-    } else if (event.key === 'ArrowUp') {
+    } else if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
       nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
     }
     items[nextIndex]?.focus();
@@ -117,7 +171,7 @@ export default function ContextMenu({
         <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+Shift+C</kbd>
       </button>
 
-      <div className="context-menu-divider" />
+      <div className="context-menu-divider" role="separator" />
 
       <div className={`context-menu-parent submenu-${submenuDirection}`}>
         <button
@@ -126,6 +180,8 @@ export default function ContextMenu({
           role="menuitem"
           aria-haspopup="menu"
           aria-expanded={isStacked ? openSections.open : undefined}
+          aria-controls="context-open-submenu"
+          data-menu-section="open"
           onClick={() => toggleSection('open')}
         >
           <span>{t('menu.open')}</span>
@@ -133,6 +189,7 @@ export default function ContextMenu({
         </button>
         <div
           className={`context-submenu ${submenuDirection} ${openSections.open ? 'is-open' : ''}`}
+          id="context-open-submenu"
           role="menu"
         >
           <button className="context-menu-item" type="button" role="menuitem" onClick={onOpenDefault}>
@@ -141,7 +198,7 @@ export default function ContextMenu({
           <button className="context-menu-item" type="button" role="menuitem" onClick={onOpenWith}>
             {t('menu.openWith')}
           </button>
-          <div className="context-menu-divider" />
+          <div className="context-menu-divider" role="separator" />
           {customApps.length > 0 ? (
             customApps.map((app) => (
               <button
@@ -156,9 +213,11 @@ export default function ContextMenu({
               </button>
             ))
           ) : (
-            <div className="context-menu-item disabled">{t('menu.noCustomApps')}</div>
+            <div className="context-menu-item disabled" role="menuitem" aria-disabled="true">
+              {t('menu.noCustomApps')}
+            </div>
           )}
-          <div className="context-menu-divider" />
+          <div className="context-menu-divider" role="separator" />
           <button className="context-menu-item" type="button" role="menuitem" onClick={onRegisterApp}>
             {t('menu.registerApp')}
           </button>
@@ -181,6 +240,8 @@ export default function ContextMenu({
           role="menuitem"
           aria-haspopup="menu"
           aria-expanded={isStacked ? openSections.files : undefined}
+          aria-controls="context-file-submenu"
+          data-menu-section="files"
           onClick={() => toggleSection('files')}
         >
           <span>{t('menu.fileActions')}</span>
@@ -188,6 +249,7 @@ export default function ContextMenu({
         </button>
         <div
           className={`context-submenu ${submenuDirection} ${openSections.files ? 'is-open' : ''}`}
+          id="context-file-submenu"
           role="menu"
         >
           <button className="context-menu-item" type="button" role="menuitem" onClick={onReveal}>
@@ -196,7 +258,7 @@ export default function ContextMenu({
           <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyPath}>
             {t('menu.copyPath')}
           </button>
-          <div className="context-menu-divider" />
+          <div className="context-menu-divider" role="separator" />
           <button className="context-menu-item" type="button" role="menuitem" onClick={onSaveAs}>
             <span>{t('menu.saveAs')}</span>
             <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+S</kbd>

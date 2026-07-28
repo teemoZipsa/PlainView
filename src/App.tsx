@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { Image as TauriImage } from '@tauri-apps/api/image';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import packageInfo from '../package.json';
 import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
@@ -14,15 +15,11 @@ import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
 import { useFolderSync } from './hooks/useFolderSync';
+import { useContextMenuController } from './hooks/useContextMenuController';
+import { useSystemIntegration } from './hooks/useSystemIntegration';
 import { commandErrorKeys, detectLocale, translate, type TranslationKey } from './i18n';
 import { drawImageToCanvas } from './imageCanvas';
 import { SUPPORTED_IMAGE_EXTENSIONS } from './imageFormats';
-import {
-  clampContextMenuToViewport,
-  CONTEXT_MENU_MARGIN,
-  getInitialContextMenuPlacement,
-  type SubmenuDirection,
-} from './contextMenuGeometry';
 import {
   exceedsPanBoundary,
   hasPanOverflow,
@@ -52,13 +49,6 @@ interface FullscreenSnapshot {
   zoom: number;
   fitMode: FitMode;
   panOffset: { x: number; y: number };
-}
-
-interface ContextMenuState {
-  x: number;
-  y: number;
-  submenuDirection: SubmenuDirection;
-  submenuVerticalDirection: 'down' | 'up';
 }
 
 interface AppRegistrationDraft {
@@ -123,7 +113,6 @@ function App() {
     height: window.innerHeight,
   }));
   const [customOpenApps, setCustomOpenApps] = useState<CustomOpenApp[]>([]);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [registrationDraft, setRegistrationDraft] = useState<AppRegistrationDraft | null>(null);
   const [renameDraft, setRenameDraft] = useState<RenameDraft | null>(null);
   const [isCustomAppManagerOpen, setIsCustomAppManagerOpen] = useState(false);
@@ -155,9 +144,18 @@ function App() {
   });
 
   const viewerRef = useRef<HTMLDivElement>(null);
+  const {
+    contextMenu,
+    contextMenuRef,
+    handleContextMenu,
+    closeContextMenu,
+    dismissContextMenu,
+  } = useContextMenuController({
+    enabled: Boolean(state.currentFilePath) && !state.isLoading && !state.errorMessage,
+    focusTargetRef: viewerRef,
+  });
   const viewerImageRef = useRef<HTMLImageElement>(null);
   const printCanvasRef = useRef<HTMLCanvasElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
@@ -218,10 +216,6 @@ function App() {
       setToast(null);
       toastTimerRef.current = null;
     }, duration);
-  }, []);
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null);
   }, []);
 
   const updateGifPause = useCallback((nextPause: GifPauseState | null) => {
@@ -909,6 +903,16 @@ function App() {
     [getErrorMessage, saveSettings, showToast, t]
   );
 
+  const {
+    checkForAppUpdates,
+    openReleasePage,
+    openDefaultAppsSettings,
+  } = useSystemIntegration({
+    currentVersion: packageInfo.version,
+    t,
+    showError: (message) => showToast(message, 'error'),
+  });
+
   // ---- Close ----
 
   const closeApp = useCallback(async () => {
@@ -922,75 +926,6 @@ function App() {
   }, [saveSettings]);
 
   // ---- Context menu actions ----
-
-  const handleContextMenu = useCallback(
-    (event: React.MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      if (!state.currentFilePath || state.isLoading || state.errorMessage) {
-        closeContextMenu();
-        return;
-      }
-
-      setContextMenu(
-        getInitialContextMenuPlacement({
-          pointerX: event.clientX,
-          pointerY: event.clientY,
-          viewportWidth: window.innerWidth,
-          viewportHeight: window.innerHeight,
-        })
-      );
-    },
-    [closeContextMenu, state.currentFilePath, state.errorMessage, state.isLoading]
-  );
-
-  // Clamp the rendered menu using its real dimensions. Menu content can grow
-  // when labels or registered custom apps change, so a fixed height estimate
-  // can leave the bottom actions outside the window.
-  useLayoutEffect(() => {
-    if (!contextMenu || !contextMenuRef.current) return;
-
-    const menu = contextMenuRef.current;
-    const reposition = () => {
-      const rect = menu.getBoundingClientRect();
-      const availableHeight = Math.max(0, window.innerHeight - CONTEXT_MENU_MARGIN * 2);
-      const needsVerticalScroll = menu.scrollHeight > availableHeight;
-      const { x, y } = clampContextMenuToViewport({
-        x: contextMenu.x,
-        y: contextMenu.y,
-        menuWidth: rect.width,
-        menuHeight: menu.scrollHeight,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-      });
-      const submenuDirection = needsVerticalScroll
-        ? 'stacked'
-        : contextMenu.submenuDirection;
-
-      if (
-        x !== contextMenu.x ||
-        y !== contextMenu.y ||
-        submenuDirection !== contextMenu.submenuDirection
-      ) {
-        setContextMenu((current) =>
-          current
-            ? {
-                ...current,
-                x,
-                y,
-                submenuDirection,
-              }
-            : current
-        );
-      }
-    };
-
-    reposition();
-    const observer = new ResizeObserver(reposition);
-    observer.observe(menu);
-    return () => observer.disconnect();
-  }, [contextMenu]);
 
   const handleRevealInExplorer = useCallback(async () => {
     closeContextMenu();
@@ -1941,32 +1876,6 @@ function App() {
     };
   }, [handleMouseUp]);
 
-  useEffect(() => {
-    if (!contextMenu) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (contextMenuRef.current?.contains(target)) return;
-      closeContextMenu();
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeContextMenu();
-    };
-
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('blur', closeContextMenu);
-    window.addEventListener('resize', closeContextMenu);
-
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('blur', closeContextMenu);
-      window.removeEventListener('resize', closeContextMenu);
-    };
-  }, [closeContextMenu, contextMenu]);
-
   // ---- Viewer resize handler ----
 
   useEffect(() => {
@@ -2247,6 +2156,7 @@ function App() {
       <div
         ref={viewerRef}
         className="image-container"
+        tabIndex={-1}
         onDoubleClick={handleViewerDoubleClick}
       >
         {renderImage()}
@@ -2323,6 +2233,7 @@ function App() {
           onRegisterApp={handleRegisterCustomApp}
           onManageApps={handleManageCustomApps}
           onPrint={handlePrintFile}
+          onDismiss={dismissContextMenu}
         />
       )}
 
@@ -2484,6 +2395,7 @@ function App() {
 
       {isSettingsOpen && (
         <SettingsModal
+          currentVersion={packageInfo.version}
           initialSettings={{
             rememberWindowPosition: settingsRef.current.rememberWindowPosition,
             loopNavigation: settingsRef.current.loopNavigation,
@@ -2492,6 +2404,9 @@ function App() {
             overlayHideDelayMs: settingsRef.current.overlayHideDelayMs,
           }}
           t={t}
+          onCheckForUpdates={checkForAppUpdates}
+          onOpenRelease={openReleasePage}
+          onOpenDefaultAppsSettings={openDefaultAppsSettings}
           onCancel={() => setIsSettingsOpen(false)}
           onSave={(draft) => {
             void saveViewerSettings(draft);

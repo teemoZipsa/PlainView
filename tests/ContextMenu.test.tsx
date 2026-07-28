@@ -35,6 +35,7 @@ const callbacks = () => ({
   onRegisterApp: vi.fn(),
   onManageApps: vi.fn(),
   onPrint: vi.fn(),
+  onDismiss: vi.fn(),
 });
 
 let container: HTMLDivElement;
@@ -140,6 +141,56 @@ describe('ContextMenu', () => {
       menu?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     });
     expect(document.activeElement).toBe(secondButton);
+
+    await act(async () => {
+      secondButton.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
+      );
+    });
+    expect(document.activeElement).toBe(firstButton);
+  });
+
+  it('opens and closes a stacked submenu with Right and Left arrows', async () => {
+    await renderMenu('stacked');
+    const [, , openButton] = getRootButtons();
+    const openMenu = container.querySelector<HTMLElement>('#context-open-submenu');
+    const firstOpenAction = openMenu?.querySelector<HTMLButtonElement>(
+      'button.context-menu-item'
+    );
+
+    openButton.focus();
+    await act(async () => {
+      openButton.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+      );
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+    });
+
+    expect(openButton.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(firstOpenAction);
+
+    await act(async () => {
+      firstOpenAction?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
+      );
+    });
+
+    expect(openButton.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(openButton);
+  });
+
+  it('dismisses the menu with Escape without invoking an action', async () => {
+    const handlers = await renderMenu();
+    const firstButton = getRootButtons()[0];
+
+    await act(async () => {
+      firstButton.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+    });
+
+    expect(handlers.onDismiss).toHaveBeenCalledTimes(1);
+    expect(handlers.onCopyImage).not.toHaveBeenCalled();
   });
 
   it('keeps menu scrolling from bubbling into viewer zoom', async () => {

@@ -1,7 +1,7 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.6",
+  "version": "0.7.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/useFolderSync.test.tsx",
     "test:image-cache": "node --test tests/imageCache.test.ts",
     "test:image-formats": "node --test tests/imageFormats.test.ts",
+    "test:update-check": "node --test tests/updateCheck.test.ts",
     "test:image-canvas": "node --test tests/imageCanvas.test.ts",
     "test:window-geometry": "node --test tests/windowGeometry.test.ts",
     "preview": "vite preview",

@@ -51,9 +51,11 @@ html, body, #root {
   --accent: rgba(100, 160, 255, 0.56);
   --accent-strong: rgba(100, 160, 255, 0.65);
   --accent-ring: rgba(100, 160, 255, 0.45);
+  --accent-text: #9dc3ff;
   --danger: rgba(220, 60, 60, 0.62);
   --danger-hover: rgba(220, 60, 60, 0.7);
   --danger-muted: rgba(220, 60, 60, 0.28);
+  --danger-text: #ff9a9a;
   --spinner-track: rgba(255, 255, 255, 0.1);
   --spinner-head: rgba(255, 255, 255, 0.5);
 
@@ -99,9 +101,11 @@ html, body, #root {
   --accent: rgba(37, 99, 235, 0.16);
   --accent-strong: rgba(37, 99, 235, 0.24);
   --accent-ring: rgba(37, 99, 235, 0.34);
+  --accent-text: #1d4ed8;
   --danger: rgba(220, 38, 38, 0.78);
   --danger-hover: rgba(220, 38, 38, 0.84);
   --danger-muted: rgba(220, 38, 38, 0.14);
+  --danger-text: #b91c1c;
   --spinner-track: rgba(31, 35, 40, 0.12);
   --spinner-head: rgba(31, 35, 40, 0.46);
 }
@@ -465,6 +469,60 @@ html, body, #root {
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.4;
+}
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  color: var(--text-primary);
+  background-color: var(--surface-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+}
+
+.settings-panel-copy strong,
+.settings-panel-copy small {
+  display: block;
+}
+
+.settings-panel-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-panel-copy small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.settings-update-status {
+  min-height: 17px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.settings-update-status.status-available {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.settings-update-status.status-error {
+  color: var(--danger-text);
+}
+
+.settings-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.settings-panel-actions .app-modal-button {
+  min-height: 30px;
+  padding: 6px 10px;
 }
 
 .app-modal-title {

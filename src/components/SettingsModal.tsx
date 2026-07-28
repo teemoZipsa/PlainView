@@ -5,27 +5,62 @@ import type {
   LocalePreference,
   SettingsDraft,
 } from '../types';
+import type { UpdateCheckResult } from '../updateCheck';
+
+type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'current'; result: UpdateCheckResult }
+  | { kind: 'ahead'; result: UpdateCheckResult }
+  | { kind: 'available'; result: UpdateCheckResult }
+  | { kind: 'error' };
 
 interface SettingsModalProps {
   initialSettings: SettingsDraft;
+  currentVersion: string;
   t: TFunction;
   onCancel: () => void;
   onSave: (settings: SettingsDraft) => void;
+  onCheckForUpdates: () => Promise<UpdateCheckResult>;
+  onOpenRelease: (url: string) => void;
+  onOpenDefaultAppsSettings: () => void;
 }
 
 export default function SettingsModal({
   initialSettings,
+  currentVersion,
   t,
   onCancel,
   onSave,
+  onCheckForUpdates,
+  onOpenRelease,
+  onOpenDefaultAppsSettings,
 }: SettingsModalProps) {
   const [draft, setDraft] = useState(initialSettings);
+  const [updateState, setUpdateState] = useState<UpdateState>({ kind: 'idle' });
 
   const updateDraft = <Key extends keyof SettingsDraft>(
     key: Key,
     value: SettingsDraft[Key]
   ) => {
     setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleCheckForUpdates = async () => {
+    setUpdateState({ kind: 'checking' });
+    try {
+      const result = await onCheckForUpdates();
+      setUpdateState({
+        kind: result.updateAvailable
+          ? 'available'
+          : result.currentVersionAhead
+            ? 'ahead'
+            : 'current',
+        result,
+      });
+    } catch {
+      setUpdateState({ kind: 'error' });
+    }
   };
 
   return (
@@ -124,6 +159,83 @@ export default function SettingsModal({
               <small>{t('settings.rememberWindowDescription')}</small>
             </span>
           </label>
+
+          <section
+            className="settings-panel settings-default-apps"
+            aria-labelledby="settings-default-apps-title"
+          >
+            <div className="settings-panel-copy">
+              <strong id="settings-default-apps-title">
+                {t('settings.defaultAppsTitle')}
+              </strong>
+              <small>{t('settings.defaultAppsDescription')}</small>
+            </div>
+            <div className="settings-panel-actions">
+              <button
+                type="button"
+                className="app-modal-button secondary settings-default-apps-open"
+                onClick={onOpenDefaultAppsSettings}
+              >
+                {t('settings.openDefaultApps')}
+              </button>
+            </div>
+          </section>
+
+          <section
+            className="settings-panel settings-update"
+            aria-labelledby="settings-update-title"
+          >
+            <div className="settings-panel-copy">
+              <strong id="settings-update-title">{t('settings.updateTitle')}</strong>
+              <small>
+                {t('settings.currentVersion', { version: currentVersion })}
+              </small>
+            </div>
+
+            <div
+              className={`settings-update-status status-${updateState.kind}`}
+              role={updateState.kind === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              {updateState.kind === 'idle' && t('settings.updateIdle')}
+              {updateState.kind === 'checking' && t('settings.updateChecking')}
+              {updateState.kind === 'current' &&
+                t('settings.updateCurrent', {
+                  version: updateState.result.latestVersion,
+                })}
+              {updateState.kind === 'ahead' &&
+                t('settings.updateAhead', {
+                  version: updateState.result.latestVersion,
+                })}
+              {updateState.kind === 'available' &&
+                t('settings.updateAvailable', {
+                  version: updateState.result.latestVersion,
+                })}
+              {updateState.kind === 'error' && t('settings.updateFailed')}
+            </div>
+
+            <div className="settings-panel-actions">
+              <button
+                type="button"
+                className="app-modal-button secondary settings-update-check"
+                disabled={updateState.kind === 'checking'}
+                onClick={() => void handleCheckForUpdates()}
+              >
+                {updateState.kind === 'checking'
+                  ? t('settings.updateCheckingButton')
+                  : t('settings.checkForUpdates')}
+              </button>
+              {updateState.kind === 'available' && (
+                <button
+                  type="button"
+                  className="app-modal-button primary settings-update-open"
+                  onClick={() => onOpenRelease(updateState.result.releaseUrl)}
+                >
+                  {t('settings.openRelease')}
+                </button>
+              )}
+            </div>
+          </section>
         </div>
 
         <div className="app-modal-actions">

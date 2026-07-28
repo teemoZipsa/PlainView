@@ -61,7 +61,7 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Image panning** - drag to pan while zoomed in
 - **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
 - **Window dragging** - drag the image area in default mode, or use the top handle / Alt-drag while zoomed
-- **Context menu** - copy image contents, the file object, or its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, or print with PlainView's built-in print dialog
+- **Context menu** - copy image contents, the file object, or its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, or print with PlainView's built-in print dialog; supports arrow-key, Tab, and Escape navigation
 - **Image content copy** - copy the current image pixels with `Ctrl+C` or the context menu
 - **File copy** - copy the current image as a file object with `Ctrl+Shift+C` or the context menu so it can be pasted into File Explorer, mail, and other compatible apps
 - **File path copy** - copy the current image's full path from the context menu
@@ -77,6 +77,8 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Recoverable error view** - continue with Retry, Next image, or Show in folder actions
 - **Compact settings panel** - configure language, default view, looping, remembered position, and control hide delay
 - **Settings persistence** - automatically saves window position, always-on-top state, and viewing preferences
+- **Default Apps helper** - open Windows Default Apps settings directly and explain per-file-type selection
+- **Update check** - compare the current version with the latest public GitHub release and open its download page
 
 ## Tech Stack
 
@@ -108,7 +110,8 @@ npm run release:windows
 
 ## Current Limitations
 
-- File association must be configured manually after installation through Windows default app settings.
+- Windows requires users to confirm default-app choices; PlainView can open the relevant Windows settings page directly.
+- Update checks contact GitHub only when requested; installation remains a user-initiated download.
 - PlainView is view-only and does not include image editing tools.
 - GIF support is limited to click-to-pause and click-to-resume. Frame-by-frame navigation is not supported.
 - Formats the WebView cannot render directly are converted to PNG and loaded as base64 data, with a 5-image LRU cache for converted results.

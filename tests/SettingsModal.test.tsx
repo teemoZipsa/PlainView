@@ -18,6 +18,21 @@ const initialSettings: SettingsDraft = {
   locale: 'system',
   overlayHideDelayMs: 2000,
 };
+const currentVersion = '0.7.7';
+const currentRelease = {
+  currentVersion,
+  latestVersion: currentVersion,
+  releaseUrl: 'https://github.com/teemoZipsa/PlainView/releases/tag/v0.7.7',
+  updateAvailable: false,
+  currentVersionAhead: false,
+};
+
+const updateProps = () => ({
+  currentVersion,
+  onCheckForUpdates: vi.fn(async () => currentRelease),
+  onOpenRelease: vi.fn(),
+  onOpenDefaultAppsSettings: vi.fn(),
+});
 
 let container: HTMLDivElement;
 let root: Root;
@@ -41,6 +56,7 @@ describe('SettingsModal', () => {
     await act(async () => {
       root.render(
         <SettingsModal
+          {...updateProps()}
           initialSettings={initialSettings}
           t={t}
           onCancel={vi.fn()}
@@ -82,6 +98,7 @@ describe('SettingsModal', () => {
     await act(async () => {
       root.render(
         <SettingsModal
+          {...updateProps()}
           initialSettings={initialSettings}
           t={t}
           onCancel={onCancel}
@@ -107,6 +124,7 @@ describe('SettingsModal', () => {
       root.render(
         <div onWheel={onParentWheel}>
           <SettingsModal
+            {...updateProps()}
             initialSettings={initialSettings}
             t={t}
             onCancel={vi.fn()}
@@ -123,5 +141,100 @@ describe('SettingsModal', () => {
     });
 
     expect(onParentWheel).not.toHaveBeenCalled();
+  });
+
+  it('opens Windows Default Apps settings only when requested', async () => {
+    const onOpenDefaultAppsSettings = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <SettingsModal
+          {...updateProps()}
+          initialSettings={initialSettings}
+          t={t}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onOpenDefaultAppsSettings={onOpenDefaultAppsSettings}
+        />
+      );
+    });
+
+    expect(onOpenDefaultAppsSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.settings-default-apps-open')?.click();
+    });
+
+    expect(onOpenDefaultAppsSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an available update and opens only the returned release URL', async () => {
+    const result = {
+      currentVersion,
+      latestVersion: '0.7.8',
+      releaseUrl: 'https://github.com/teemoZipsa/PlainView/releases/tag/v0.7.8',
+      updateAvailable: true,
+      currentVersionAhead: false,
+    };
+    const onCheckForUpdates = vi.fn(async () => result);
+    const onOpenRelease = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <SettingsModal
+          currentVersion={currentVersion}
+          initialSettings={initialSettings}
+          t={t}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onCheckForUpdates={onCheckForUpdates}
+          onOpenRelease={onOpenRelease}
+          onOpenDefaultAppsSettings={vi.fn()}
+        />
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.settings-update-check')?.click();
+    });
+
+    expect(onCheckForUpdates).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.settings-update-status')?.textContent).toBe(
+      'settings.updateAvailable'
+    );
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.settings-update-open')?.click();
+    });
+
+    expect(onOpenRelease).toHaveBeenCalledWith(result.releaseUrl);
+  });
+
+  it('keeps a failed update check inside the settings panel', async () => {
+    await act(async () => {
+      root.render(
+        <SettingsModal
+          currentVersion={currentVersion}
+          initialSettings={initialSettings}
+          t={t}
+          onCancel={vi.fn()}
+          onSave={vi.fn()}
+          onCheckForUpdates={vi.fn(async () => {
+            throw new Error('offline');
+          })}
+          onOpenRelease={vi.fn()}
+          onOpenDefaultAppsSettings={vi.fn()}
+        />
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.settings-update-check')?.click();
+    });
+
+    expect(container.querySelector('.settings-update-status')?.textContent).toBe(
+      'settings.updateFailed'
+    );
+    expect(container.querySelector('.settings-update-open')).toBeNull();
   });
 });

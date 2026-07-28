@@ -409,7 +409,7 @@ fn to_wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
 }
 
 #[cfg(windows)]
-fn shell_error_from_code(code: u32) -> CommandError {
+fn shell_error_from_code(code: u32, fallback_message: &str) -> CommandError {
     match code {
         ERROR_FILE_NOT_FOUND => command_error("file_not_found", "File not found."),
         ERROR_PATH_NOT_FOUND => command_error("file_not_found", "File path not found."),
@@ -417,16 +417,21 @@ fn shell_error_from_code(code: u32) -> CommandError {
         ERROR_NO_ASSOCIATION => command_error("no_association", "No default app is associated."),
         _ => command_error(
             "open_failed",
-            format!("Could not launch the default app. Error code: {}", code),
+            format!("{} Error code: {}", fallback_message, code),
         ),
     }
 }
 
 #[cfg(windows)]
-fn shell_execute(path: &Path, verb: Option<&str>) -> Result<(), CommandError> {
-    let file_wide = to_wide_null(path.as_os_str());
+fn shell_execute_target(
+    target: &std::ffi::OsStr,
+    verb: Option<&str>,
+    directory: Option<&Path>,
+    fallback_message: &str,
+) -> Result<(), CommandError> {
+    let file_wide = to_wide_null(target);
     let verb_wide = verb.map(|value| to_wide_null(std::ffi::OsStr::new(value)));
-    let directory_wide = path.parent().map(|parent| to_wide_null(parent.as_os_str()));
+    let directory_wide = directory.map(|value| to_wide_null(value.as_os_str()));
 
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -458,7 +463,17 @@ fn shell_execute(path: &Path, verb: Option<&str>) -> Result<(), CommandError> {
     }
 
     let code = unsafe { GetLastError() };
-    Err(shell_error_from_code(code))
+    Err(shell_error_from_code(code, fallback_message))
+}
+
+#[cfg(windows)]
+fn shell_execute(path: &Path, verb: Option<&str>) -> Result<(), CommandError> {
+    shell_execute_target(
+        path.as_os_str(),
+        verb,
+        path.parent(),
+        "Could not launch the default app.",
+    )
 }
 
 #[cfg(windows)]
@@ -1465,6 +1480,27 @@ fn open_with_default_app(app: AppHandle, path: String) -> Result<(), CommandErro
 }
 
 #[tauri::command]
+fn open_default_apps_settings() -> Result<(), CommandError> {
+    #[cfg(windows)]
+    {
+        shell_execute_target(
+            std::ffi::OsStr::new("ms-settings:defaultapps"),
+            None,
+            None,
+            "Could not open Windows Default Apps settings.",
+        )
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err(command_error(
+            "platform_unsupported",
+            "Default Apps settings are only available on Windows.",
+        ))
+    }
+}
+
+#[tauri::command]
 fn copy_file_to_clipboard(path: String) -> Result<(), CommandError> {
     let file = PathBuf::from(&path);
     if !file.is_file() {
@@ -1796,6 +1832,7 @@ pub fn run() {
             get_restorable_window_bounds,
             restore_window_bounds,
             open_with_default_app,
+            open_default_apps_settings,
             copy_file_to_clipboard,
             show_open_with_dialog,
             show_file_properties,
