@@ -9,11 +9,14 @@ import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import SettingsModal from './components/SettingsModal';
+import EmptyView from './components/EmptyView';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
+import { useFolderSync } from './hooks/useFolderSync';
 import { commandErrorKeys, detectLocale, translate, type TranslationKey } from './i18n';
 import { drawImageToCanvas } from './imageCanvas';
+import { SUPPORTED_IMAGE_EXTENSIONS } from './imageFormats';
 import {
   clampContextMenuToViewport,
   CONTEXT_MENU_MARGIN,
@@ -182,7 +185,6 @@ function App() {
   } | null>(null);
   const viewerStateRef = useRef(state);
   const failedLoadRef = useRef(failedLoad);
-  const focusRefreshRef = useRef<() => Promise<void>>(async () => {});
 
   // Race condition prevention: monotonic request counter
   const requestIdRef = useRef(0);
@@ -603,6 +605,55 @@ function App() {
     void openImage(failedLoad.filePath, failedLoad.imageList, failedLoad.index);
   }, [failedLoad, invalidateImage, openImage]);
 
+  const openImageFromPath = useCallback(
+    async (filePath: string) => {
+      try {
+        const imageList = await scanFolder(filePath);
+        const index = imageList.findIndex(
+          (path) => path.toLowerCase() === filePath.toLowerCase()
+        );
+        if (imageList.length > 0 && index >= 0) {
+          await openImage(filePath, imageList, index);
+        } else {
+          await openImage(filePath, [filePath], 0);
+        }
+      } catch {
+        await openImage(filePath, [filePath], 0);
+      }
+    },
+    [openImage, scanFolder]
+  );
+
+  const handleOpenImageDialog = useCallback(async () => {
+    if (isNativeDialogOpenRef.current) return;
+
+    isNativeDialogOpenRef.current = true;
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: false,
+        title: t('dialog.openImageTitle'),
+        filters: [
+          {
+            name: t('dialog.imageFilter'),
+            extensions: [...SUPPORTED_IMAGE_EXTENSIONS],
+          },
+        ],
+      });
+
+      if (typeof selected !== 'string') return;
+      await openImageFromPath(selected);
+    } catch (error) {
+      console.warn('Failed to open the image picker:', error);
+      showToast(t('toast.openImageDialogFailed'), 'error', 3200);
+    } finally {
+      // Keep shortcuts suppressed through a queued Escape from the native dialog.
+      window.setTimeout(() => {
+        isNativeDialogOpenRef.current = false;
+      }, 250);
+    }
+  }, [openImageFromPath, showToast, t]);
+
   const openNextAfterError = useCallback(() => {
     if (!failedLoad || failedLoad.imageList.length <= 1) return;
 
@@ -691,7 +742,10 @@ function App() {
     [invalidateImage, isImageStale, openImage, scanFolder, t]
   );
 
-  focusRefreshRef.current = () => refreshCurrentFolder(false);
+  useFolderSync({
+    filePath: failedLoad?.filePath ?? state.currentFilePath,
+    onRefresh: () => refreshCurrentFolder(false),
+  });
 
   // ---- Tauri native drag-and-drop ----
   // Use a ref so the listener callback always reads the latest scanFolder/openImage
@@ -700,22 +754,22 @@ function App() {
   const fileDropRef = useRef<(paths: string[]) => void>(() => {});
   fileDropRef.current = (paths: string[]) => {
     if (paths.length === 0) return;
-    const filePath = paths[0];
-
-    (async () => {
-      try {
-        const imageList = await scanFolder(filePath);
-        const index = imageList.findIndex(
-          (p) => p.toLowerCase() === filePath.toLowerCase()
-        );
-        openImage(filePath, imageList, Math.max(0, index));
-      } catch {
-        openImage(filePath, [filePath], 0);
-      }
-    })();
+    void openImageFromPath(paths[0]);
   };
 
   // ---- Navigation ----
+
+  const navigateToIndex = useCallback(
+    (requestedIndex: number) => {
+      if (state.imageList.length === 0) return;
+
+      const index = Math.max(0, Math.min(requestedIndex, state.imageList.length - 1));
+      if (index === state.currentIndex) return;
+
+      void openImage(state.imageList[index], state.imageList, index);
+    },
+    [openImage, state.currentIndex, state.imageList]
+  );
 
   const navigateImage = useCallback(
     (direction: 1 | -1) => {
@@ -732,10 +786,9 @@ function App() {
 
       if (newIndex === state.currentIndex) return;
 
-      const newPath = state.imageList[newIndex];
-      openImage(newPath, state.imageList, newIndex);
+      navigateToIndex(newIndex);
     },
-    [state.imageList, state.currentIndex, openImage]
+    [navigateToIndex, state.currentIndex, state.imageList.length]
   );
 
   // ---- Zoom ----
@@ -1829,9 +1882,14 @@ function App() {
   // ---- Keyboard shortcuts ----
 
   useKeyboardShortcuts({
+    onOpenImage: () => {
+      void handleOpenImageDialog();
+    },
     onClose: closeApp,
     onPrevImage: () => navigateImage(-1),
     onNextImage: () => navigateImage(1),
+    onFirstImage: () => navigateToIndex(0),
+    onLastImage: () => navigateToIndex(state.imageList.length - 1),
     onZoomIn: zoomIn,
     onZoomOut: zoomOut,
     onOriginalSize: setOriginalSize,
@@ -2025,37 +2083,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refresh the folder list and cached image revision whenever the user returns
-  // from Explorer or an editor. This keeps external additions, deletions, and
-  // same-path replacements in sync without a permanent file watcher.
-  useEffect(() => {
-    let cancelled = false;
-    let unlistenFn: (() => void) | null = null;
-
-    const setup = async () => {
-      try {
-        const unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-          if (focused) void focusRefreshRef.current();
-        });
-
-        if (cancelled) {
-          unlisten();
-        } else {
-          unlistenFn = unlisten;
-        }
-      } catch {
-        // Focus events are unavailable in the browser-only development view.
-      }
-    };
-
-    setup();
-
-    return () => {
-      cancelled = true;
-      if (unlistenFn) unlistenFn();
-    };
-  }, []);
-
   // ---- Initial load ----
 
   useEffect(() => {
@@ -2105,12 +2132,7 @@ function App() {
       try {
         const args = await getCliArgs();
         if (args.length > 1) {
-          const imagePath = args[1];
-          const imageList = await scanFolder(imagePath);
-          const index = imageList.findIndex(
-            (p) => p.toLowerCase() === imagePath.toLowerCase()
-          );
-          await openImage(imagePath, imageList, Math.max(0, index));
+          await openImageFromPath(args[1]);
           windowBoundsReadyRef.current = true;
           await saveWindowBounds();
           return;
@@ -2180,18 +2202,7 @@ function App() {
     }
 
     if (!state.imageSrc) {
-      return (
-        <div className="empty-view">
-          <div className="empty-icon">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.4">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <polyline points="21 15 16 10 5 21" />
-            </svg>
-          </div>
-          <p className="empty-text">{t('empty.dragImage')}</p>
-        </div>
-      );
+      return <EmptyView t={t} onOpenImage={() => void handleOpenImageDialog()} />;
     }
 
     const transform = `

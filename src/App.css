@@ -1128,7 +1128,7 @@ html, body, #root {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 12px;
   width: 100%;
   height: 100%;
 }
@@ -1137,10 +1137,43 @@ html, body, #root {
   opacity: 0.3;
 }
 
+.empty-open-button {
+  min-height: 36px;
+  padding: 8px 18px;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  background: var(--surface-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.empty-open-button:hover {
+  border-color: var(--accent-ring);
+  background: var(--surface-input-active);
+}
+
+.empty-open-button:active {
+  transform: translateY(1px);
+}
+
+.empty-open-button:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
 .empty-text {
   font-size: 14px;
   font-weight: 400;
   color: var(--text-faint);
+  margin: 0;
+  text-align: center;
 }
 
 @media (max-width: 360px) {

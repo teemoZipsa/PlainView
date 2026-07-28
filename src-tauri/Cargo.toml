@@ -1,6 +1,6 @@
 [package]
 name = "plainview"
-version = "0.7.5"
+version = "0.7.6"
 description = "A minimal ad-free image viewer for Windows"
 authors = ["teemoZipsa"]
 edition = "2021"
@@ -24,6 +24,7 @@ psd = "0.3.5"
 tauri-plugin-dialog = "2"
 trash = "5.2.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+notify = "8.2.0"
 
 [target.'cfg(windows)'.dependencies]
 tauri-plugin-clipboard-manager = "2.3.2"

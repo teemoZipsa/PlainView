@@ -3,6 +3,7 @@ use image::{
     codecs::dds::DdsDecoder, DynamicImage, GenericImageView, ImageBuffer, ImageDecoder,
     ImageFormat, ImageReader,
 };
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::ffi::OsString;
@@ -11,8 +12,9 @@ use std::io::{Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
-use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
 #[cfg(windows)]
@@ -345,6 +347,16 @@ pub struct CommandError {
     pub message: String,
 }
 
+struct ActiveFolderWatcher {
+    folder: PathBuf,
+    _watcher: RecommendedWatcher,
+}
+
+#[derive(Default)]
+struct FolderWatcherState {
+    active: Mutex<Option<ActiveFolderWatcher>>,
+}
+
 struct DecodedImage {
     data: Vec<u8>,
     mime_type: &'static str,
@@ -357,6 +369,32 @@ fn command_error(kind: &str, message: impl Into<String>) -> CommandError {
         kind: kind.to_string(),
         message: message.into(),
     }
+}
+
+fn folder_watch_target(file_path: &str) -> Result<PathBuf, CommandError> {
+    let file = PathBuf::from(file_path);
+    let parent = file
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| {
+            command_error(
+                "parent_folder_not_found",
+                "Could not find the image folder.",
+            )
+        })?;
+
+    if !parent.is_dir() {
+        return Err(command_error(
+            "invalid_folder",
+            "The image folder does not exist.",
+        ));
+    }
+
+    fs::canonicalize(parent).map_err(|error| io_error_to_command("folder_read_failed", error))
+}
+
+fn is_relevant_folder_event(event: &Event) -> bool {
+    !matches!(event.kind, EventKind::Access(_))
 }
 
 fn path_to_string(path: &Path) -> Result<String, CommandError> {
@@ -967,10 +1005,8 @@ fn natural_file_path_cmp(left: &str, right: &str) -> Ordering {
     natural_case_insensitive_cmp(left_name, right_name)
 }
 
-/// Scan a folder for supported image files, sorted by filename ascending
-#[tauri::command]
-fn scan_folder_images(folder_path: String) -> Result<Vec<String>, CommandError> {
-    let dir = PathBuf::from(&folder_path);
+fn scan_folder_images_sync(folder_path: &str) -> Result<Vec<String>, CommandError> {
+    let dir = PathBuf::from(folder_path);
 
     if !dir.is_dir() {
         return Err(command_error(
@@ -1000,6 +1036,87 @@ fn scan_folder_images(folder_path: String) -> Result<Vec<String>, CommandError> 
     images.sort_by(|left, right| natural_file_path_cmp(left, right));
 
     Ok(images)
+}
+
+/// Scan a folder off the application thread so very large directories keep the UI responsive.
+#[tauri::command]
+async fn scan_folder_images(folder_path: String) -> Result<Vec<String>, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || scan_folder_images_sync(&folder_path))
+        .await
+        .map_err(|error| {
+            command_error(
+                "folder_read_failed",
+                format!("Could not finish scanning the folder: {error}"),
+            )
+        })?
+}
+
+#[tauri::command]
+fn watch_image_folder(
+    app: AppHandle,
+    state: State<'_, FolderWatcherState>,
+    file_path: String,
+) -> Result<(), CommandError> {
+    let folder = folder_watch_target(&file_path)?;
+
+    {
+        let active = state
+            .active
+            .lock()
+            .map_err(|_| command_error("unknown", "The folder watcher is unavailable."))?;
+        if active
+            .as_ref()
+            .is_some_and(|current| current.folder == folder)
+        {
+            return Ok(());
+        }
+    }
+
+    let event_folder = path_to_string(&folder)?;
+    let app_handle = app.clone();
+    let mut watcher =
+        notify::recommended_watcher(move |result: notify::Result<Event>| match result {
+            Ok(event) if is_relevant_folder_event(&event) => {
+                let _ = app_handle.emit("plainview://folder-changed", event_folder.clone());
+            }
+            Ok(_) => {}
+            Err(error) => eprintln!("PlainView folder watcher error: {error}"),
+        })
+        .map_err(|error| {
+            command_error(
+                "folder_watch_failed",
+                format!("Could not create the folder watcher: {error}"),
+            )
+        })?;
+
+    watcher
+        .watch(&folder, RecursiveMode::NonRecursive)
+        .map_err(|error| {
+            command_error(
+                "folder_watch_failed",
+                format!("Could not watch the image folder: {error}"),
+            )
+        })?;
+
+    let mut active = state
+        .active
+        .lock()
+        .map_err(|_| command_error("unknown", "The folder watcher is unavailable."))?;
+    *active = Some(ActiveFolderWatcher {
+        folder,
+        _watcher: watcher,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_image_folder_watch(state: State<'_, FolderWatcherState>) -> Result<(), CommandError> {
+    let mut active = state
+        .active
+        .lock()
+        .map_err(|_| command_error("unknown", "The folder watcher is unavailable."))?;
+    *active = None;
+    Ok(())
 }
 
 /// Get the parent folder of a file path
@@ -1649,6 +1766,7 @@ fn get_cli_args() -> Vec<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(FolderWatcherState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1668,6 +1786,8 @@ pub fn run() {
             read_image,
             get_image_revision,
             scan_folder_images,
+            watch_image_folder,
+            clear_image_folder_watch,
             get_parent_folder,
             load_settings,
             save_settings,
@@ -1715,6 +1835,51 @@ mod tests {
                 r"C:\images\photo10.png",
             ]
         );
+    }
+
+    #[test]
+    fn folder_scan_filters_subfolders_and_naturally_sorts_images() {
+        let dir = temp_dir("folder-scan");
+        fs::write(dir.join("photo10.png"), b"10").unwrap();
+        fs::write(dir.join("photo2.jpg"), b"2").unwrap();
+        fs::write(dir.join("notes.txt"), b"skip").unwrap();
+        fs::create_dir(dir.join("photo1.png")).unwrap();
+
+        let images = scan_folder_images_sync(&dir.to_string_lossy()).unwrap();
+        let names: Vec<_> = images
+            .iter()
+            .filter_map(|path| Path::new(path).file_name())
+            .collect();
+
+        assert_eq!(
+            names,
+            vec![
+                std::ffi::OsStr::new("photo2.jpg"),
+                std::ffi::OsStr::new("photo10.png")
+            ]
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn folder_watch_uses_the_parent_even_when_the_image_is_missing() {
+        let dir = temp_dir("watch-target");
+        let missing_image = dir.join("incoming.png");
+
+        let watched = folder_watch_target(&missing_image.to_string_lossy()).unwrap();
+        let expected = fs::canonicalize(&dir).unwrap();
+
+        assert_eq!(watched, expected);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn folder_watch_ignores_access_only_events() {
+        let access = Event::new(EventKind::Access(notify::event::AccessKind::Any));
+        let modify = Event::new(EventKind::Modify(notify::event::ModifyKind::Any));
+
+        assert!(!is_relevant_folder_event(&access));
+        assert!(is_relevant_folder_event(&modify));
     }
 
     #[test]

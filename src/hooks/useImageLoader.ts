@@ -9,6 +9,7 @@ import {
 // ---- LRU Cache with size limit ----
 
 const MAX_CACHE_SIZE = 5;
+let preloadGeneration = 0;
 
 interface CachedImage {
   src: string;
@@ -62,6 +63,8 @@ export function useImageLoader() {
     naturalWidth: number;
     naturalHeight: number;
   }> => {
+    // A user-initiated image load supersedes any adjacent-image preload loop.
+    preloadGeneration += 1;
     const revision = await invoke<ImageRevision>('get_image_revision', { path: filePath });
     const cached = preloadCache.get(filePath, revision);
     if (cached) {
@@ -118,12 +121,17 @@ export function useImageLoader() {
   }, []);
 
   const preloadImages = useCallback(async (paths: string[]) => {
+    const generation = ++preloadGeneration;
     for (const p of paths) {
+      if (generation !== preloadGeneration) return;
+
       try {
         const revision = await invoke<ImageRevision>('get_image_revision', { path: p });
+        if (generation !== preloadGeneration) return;
         if (preloadCache.isCurrent(p, revision)) continue;
 
         const data = await invoke<LoadedImageData>('read_image', { path: p });
+        if (generation !== preloadGeneration) return;
         const src = buildImageSource(data);
         preloadCache.set(p, revisionFromData(data), {
           src,

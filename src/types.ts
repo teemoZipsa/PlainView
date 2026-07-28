@@ -36,6 +36,7 @@ export type CommandErrorKind =
   | 'metadata_failed'
   | 'invalid_folder'
   | 'folder_read_failed'
+  | 'folder_watch_failed'
   | 'parent_folder_not_found'
   | 'settings_save_failed'
   | 'window_operation_failed'

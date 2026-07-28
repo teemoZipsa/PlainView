@@ -29,8 +29,10 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 | Key | Action |
 |---|---|
 | `Esc` | Close |
+| `Ctrl+O` | Open an image |
 | `Left Arrow` / `Backspace` | Previous image |
 | `Right Arrow` / `Space` | Next image |
+| `Home` / `End` | First image / last image |
 | `+` | Zoom in |
 | `-` | Zoom out |
 | `0` | Original size |
@@ -50,9 +52,11 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 ## Features
 
 - **Borderless window** - a minimal UI that keeps the image as the main surface
+- **Quick image opening** - open from the empty-state button, double-click, `Ctrl+O`, or drag and drop
 - **Hover overlay** - translucent controls appear only when needed and auto-hide after 2 seconds
 - **Natural folder navigation** - lists same-folder images in human-friendly `1, 2, 10` order for previous/next navigation
-- **External change refresh** - rechecks added, deleted, and replaced files plus the image cache when returning from another app
+- **Live external changes** - watches the current folder for added, deleted, or replaced files, with focus refresh and `F5` as fallbacks
+- **Large-folder responsiveness** - scans and sorts folders in the background and stops obsolete image preloads
 - **Zoom controls** - zoom with the mouse wheel, keyboard, or buttons
 - **Image panning** - drag to pan while zoomed in
 - **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale

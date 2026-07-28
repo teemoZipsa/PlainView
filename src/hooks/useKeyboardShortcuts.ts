@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 
 interface KeyboardShortcutsProps {
+  onOpenImage: () => void;
   onClose: () => void;
   onPrevImage: () => void;
   onNextImage: () => void;
+  onFirstImage: () => void;
+  onLastImage: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onOriginalSize: () => void;
@@ -35,6 +38,15 @@ function isEditableTarget(target: EventTarget | null): boolean {
 function isCopyShortcut(e: KeyboardEvent): boolean {
   return (
     e.key.toLowerCase() === 'c' &&
+    (e.ctrlKey || e.metaKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  );
+}
+
+function isOpenShortcut(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 'o' &&
     (e.ctrlKey || e.metaKey) &&
     !e.altKey &&
     !e.shiftKey
@@ -100,6 +112,12 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         return;
       }
 
+      if (isOpenShortcut(e)) {
+        e.preventDefault();
+        p.onOpenImage();
+        return;
+      }
+
       if (isFileCopyShortcut(e)) {
         e.preventDefault();
         p.onCopyFile();
@@ -157,6 +175,14 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         case 'F5':
           e.preventDefault();
           p.onReload();
+          break;
+        case 'Home':
+          e.preventDefault();
+          p.onFirstImage();
+          break;
+        case 'End':
+          e.preventDefault();
+          p.onLastImage();
           break;
         case 'ArrowRight':
         case ' ': // Space

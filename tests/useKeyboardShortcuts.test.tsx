@@ -9,9 +9,12 @@ import { useKeyboardShortcuts } from '../src/hooks/useKeyboardShortcuts';
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 const callbacks = () => ({
+  onOpenImage: vi.fn(),
   onClose: vi.fn(),
   onPrevImage: vi.fn(),
   onNextImage: vi.fn(),
+  onFirstImage: vi.fn(),
+  onLastImage: vi.fn(),
   onZoomIn: vi.fn(),
   onZoomOut: vi.fn(),
   onOriginalSize: vi.fn(),
@@ -77,16 +80,22 @@ describe('useKeyboardShortcuts', () => {
 
     press('c', { ctrlKey: true });
     press('c', { ctrlKey: true, shiftKey: true });
+    press('o', { ctrlKey: true });
     press('p', { ctrlKey: true });
     press('F2');
     press('F5');
+    press('Home');
+    press('End');
     press('Enter', { altKey: true });
 
     expect(handlers.onCopyImage).toHaveBeenCalledTimes(1);
     expect(handlers.onCopyFile).toHaveBeenCalledTimes(1);
+    expect(handlers.onOpenImage).toHaveBeenCalledTimes(1);
     expect(handlers.onPrint).toHaveBeenCalledTimes(1);
     expect(handlers.onRename).toHaveBeenCalledTimes(1);
     expect(handlers.onReload).toHaveBeenCalledTimes(1);
+    expect(handlers.onFirstImage).toHaveBeenCalledTimes(1);
+    expect(handlers.onLastImage).toHaveBeenCalledTimes(1);
     expect(handlers.onShowProperties).toHaveBeenCalledTimes(1);
   });
 
