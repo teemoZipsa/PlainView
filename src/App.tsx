@@ -913,7 +913,15 @@ function App() {
     showError: (message) => showToast(message, 'error'),
   });
 
-  // ---- Close ----
+  // ---- Window controls ----
+
+  const minimizeApp = useCallback(async () => {
+    try {
+      await getCurrentWindow().minimize();
+    } catch {
+      showToast(t('error.windowOperationFailed'));
+    }
+  }, [showToast, t]);
 
   const closeApp = useCallback(async () => {
     try {
@@ -2192,6 +2200,7 @@ function App() {
             originalExtension: state.originalExtension,
           }}
           t={t}
+          onMinimize={minimizeApp}
           onClose={closeApp}
           onPrevImage={() => navigateImage(-1)}
           onNextImage={() => navigateImage(1)}

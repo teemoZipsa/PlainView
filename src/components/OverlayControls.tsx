@@ -20,6 +20,7 @@ interface OverlayControlsProps {
   fileName: string;
   imageInfo: ImageInfo;
   t: TFunction;
+  onMinimize: () => void;
   onClose: () => void;
   onPrevImage: () => void;
   onNextImage: () => void;
@@ -46,6 +47,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   fileName,
   imageInfo,
   t,
+  onMinimize,
   onClose,
   onPrevImage,
   onNextImage,
@@ -146,7 +148,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       onMouseEnter={onOverlayEnter}
       onMouseLeave={onOverlayLeave}
     >
-      {/* Top-right: theme + pin + settings + close */}
+      {/* Top-right: theme + pin + settings + window controls */}
       <div className="overlay-top-right">
         <button
           type="button"
@@ -216,6 +218,17 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           >
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.35.3.56.72.6 1.18V13.6h-.09A1.7 1.7 0 0 0 19.4 15Z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="overlay-btn minimize-btn"
+          onClick={(e) => handleButtonClick(e, onMinimize)}
+          title={t('overlay.minimizeTitle')}
+          aria-label={t('overlay.minimizeAria')}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="6" y1="18" x2="18" y2="18" />
           </svg>
         </button>
         <button

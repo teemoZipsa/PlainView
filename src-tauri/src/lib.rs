@@ -26,7 +26,8 @@ use windows_sys::Win32::Foundation::{
 };
 #[cfg(windows)]
 use windows_sys::Win32::Graphics::Dwm::{
-    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
+    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR,
+    DWMWA_COLOR_NONE, DWMWA_NCRENDERING_POLICY,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
@@ -83,6 +84,28 @@ fn hide_native_window_border(hwnd: HWND) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+fn enable_native_window_shadow(hwnd: HWND) -> Result<(), String> {
+    let rendering_policy = DWMNCRP_ENABLED;
+    let result = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY as u32,
+            std::ptr::addr_of!(rendering_policy).cast(),
+            std::mem::size_of_val(&rendering_policy) as u32,
+        )
+    };
+
+    if result >= 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not enable native non-client rendering (HRESULT 0x{:08X})",
+            result as u32
+        ))
+    }
+}
+
+#[cfg(windows)]
 fn extend_shadow_frame_into_client_area(hwnd: HWND) -> Result<(), String> {
     let margins = MARGINS {
         cxLeftWidth: 1,
@@ -100,6 +123,13 @@ fn extend_shadow_frame_into_client_area(hwnd: HWND) -> Result<(), String> {
             result as u32
         ))
     }
+}
+
+#[cfg(windows)]
+fn refresh_native_window_frame(hwnd: HWND) -> Result<(), String> {
+    enable_native_window_shadow(hwnd)?;
+    hide_native_window_border(hwnd)?;
+    extend_shadow_frame_into_client_area(hwnd)
 }
 
 #[cfg(windows)]
@@ -121,8 +151,7 @@ unsafe extern "system" fn borderless_window_subclass(
     }
 
     if message == WM_DWMCOMPOSITIONCHANGED {
-        let _ = hide_native_window_border(hwnd);
-        let _ = extend_shadow_frame_into_client_area(hwnd);
+        let _ = refresh_native_window_frame(hwnd);
     }
 
     if message == WM_NCDESTROY {
@@ -136,8 +165,7 @@ unsafe extern "system" fn borderless_window_subclass(
 
 #[cfg(windows)]
 fn install_native_border_suppression(hwnd: HWND) -> Result<(), String> {
-    hide_native_window_border(hwnd)?;
-    extend_shadow_frame_into_client_area(hwnd)?;
+    refresh_native_window_frame(hwnd)?;
 
     let installed = unsafe {
         SetWindowSubclass(
@@ -1208,7 +1236,7 @@ fn set_always_on_top(window: WebviewWindow, on_top: bool) -> Result<(), CommandE
 
     #[cfg(windows)]
     if let Ok(hwnd) = window.hwnd() {
-        if let Err(error) = hide_native_window_border(hwnd.0) {
+        if let Err(error) = refresh_native_window_frame(hwnd.0) {
             eprintln!("{error}");
         }
     }

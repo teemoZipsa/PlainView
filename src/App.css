@@ -869,7 +869,7 @@ html, body, #root {
   background-color: var(--surface-overlay-active);
 }
 
-/* ===== Top-Right: Close + Pin ===== */
+/* ===== Top-Right: Tools + Window Controls ===== */
 
 .overlay-top-right {
   position: absolute;
