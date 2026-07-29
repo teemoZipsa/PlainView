@@ -201,7 +201,7 @@ function App() {
     isImageStale,
   } = useImageLoader();
 
-  const overlay = useOverlayVisibility(overlayHideDelayMs);
+  const overlay = useOverlayVisibility();
 
   // ---- Utility functions ----
 
@@ -1588,7 +1588,7 @@ function App() {
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      overlay.handleMouseMove();
+      overlay.handleMouseMove(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
 
       if (!isDraggingRef.current || dragModeRef.current !== 'image-pan') return;
 
@@ -2178,14 +2178,13 @@ function App() {
         <div
           className="window-move-zone"
           onMouseDown={handleMoveMouseDown}
-          onMouseEnter={overlay.handleOverlayEnter}
-          onMouseLeave={overlay.handleOverlayLeave}
         />
       )}
 
       {!state.errorMessage && (
         <OverlayControls
-          isVisible={overlay.isVisible}
+          activeRegion={overlay.activeRegion}
+          feedbackDurationMs={overlayHideDelayMs}
           isAlwaysOnTop={state.isAlwaysOnTop}
           backgroundMode={backgroundMode}
           currentIndex={state.currentIndex}
@@ -2213,8 +2212,6 @@ function App() {
           onToggleBackgroundMode={toggleBackgroundMode}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onRotate={rotate}
-          onOverlayEnter={overlay.handleOverlayEnter}
-          onOverlayLeave={overlay.handleOverlayLeave}
         />
       )}
 

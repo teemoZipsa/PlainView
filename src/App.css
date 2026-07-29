@@ -818,19 +818,27 @@ html, body, #root {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.25s ease;
   z-index: 100;
 }
 
-.overlay-container.visible {
-  opacity: 1;
+.overlay-top-right,
+.overlay-bottom-center,
+.nav-btn {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    visibility 0s linear 150ms;
 }
 
-.overlay-container.visible .overlay-btn,
-.overlay-container.visible .overlay-bottom-center,
-.overlay-container.visible .overlay-top-right {
+.overlay-top-right.is-visible,
+.overlay-bottom-center.is-visible,
+.nav-btn.is-visible {
+  opacity: 1;
+  visibility: visible;
   pointer-events: auto;
+  transition-delay: 0s;
 }
 
 /* ===== Overlay Buttons – Shared ===== */
@@ -869,6 +877,12 @@ html, body, #root {
   background-color: var(--surface-overlay-active);
 }
 
+.overlay-btn:focus-visible,
+.overlay-status-button:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
 /* ===== Top-Right: Tools + Window Controls ===== */
 
 .overlay-top-right {
@@ -876,13 +890,65 @@ html, body, #root {
   top: 10px;
   right: 10px;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  transform: translateY(-4px);
+  transition:
+    opacity 150ms ease,
+    visibility 0s linear 150ms,
+    transform 180ms ease;
   z-index: 102;
+}
+
+.overlay-top-right.is-visible {
+  transform: translateY(0);
+}
+
+.overlay-window-controls,
+.overlay-more-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .overlay-top-right .overlay-btn {
   width: 34px;
   height: 34px;
+  color: var(--text-secondary);
+  background-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.48));
+}
+
+.app-container.theme-light .overlay-window-controls .overlay-btn {
+  filter:
+    drop-shadow(0 0 1px rgba(255, 255, 255, 0.9))
+    drop-shadow(0 1px 2px rgba(0, 0, 0, 0.42));
+}
+
+.overlay-top-right .overlay-btn:hover,
+.overlay-top-right .overlay-btn:focus-visible,
+.overlay-top-right .overlay-btn.active {
+  background-color: var(--surface-overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.overlay-more-actions {
+  padding: 3px;
+  background-color: var(--surface-toolbar);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-panel);
+  animation: contextual-hud-enter 140ms ease-out;
+}
+
+.overlay-more-actions .overlay-btn {
+  filter: none;
 }
 
 .close-btn:hover {
@@ -905,26 +971,81 @@ html, body, #root {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 40px;
-  height: 60px;
-  border-radius: 10px;
+  width: 52px;
+  height: 72px;
+  color: var(--text-muted);
+  background-color: transparent;
+  border-radius: 12px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
   z-index: 101;
 }
 
+.app-container.theme-light .nav-btn {
+  filter:
+    drop-shadow(0 0 1px rgba(255, 255, 255, 0.9))
+    drop-shadow(0 1px 3px rgba(0, 0, 0, 0.46));
+}
+
 .nav-btn:hover {
-  transform: translateY(-50%) scale(1.06);
+  background-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: translateY(-50%);
 }
 
 .nav-btn:active {
-  transform: translateY(-50%) scale(0.96);
+  transform: translateY(-50%);
+  background-color: transparent;
 }
 
 .nav-left {
-  left: 10px;
+  left: 2px;
+}
+
+.nav-btn:focus-visible {
+  outline: none;
+  background-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .nav-right {
-  right: 10px;
+  right: 2px;
+}
+
+.nav-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 44px;
+  border-radius: 10px;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    transform 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.nav-btn:hover .nav-glyph {
+  color: var(--text-primary);
+  background-color: var(--surface-overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transform: scale(1.04);
+}
+
+.nav-btn:focus-visible .nav-glyph {
+  color: var(--text-primary);
+  background-color: var(--surface-overlay);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+.nav-btn:active .nav-glyph {
+  background-color: var(--surface-overlay-active);
+  transform: scale(0.94);
 }
 
 /* ===== Bottom Center: Zoom Controls ===== */
@@ -933,13 +1054,21 @@ html, body, #root {
   position: absolute;
   bottom: 14px;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, 5px);
   max-width: calc(100vw - 20px);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  transition:
+    opacity 150ms ease,
+    visibility 0s linear 150ms,
+    transform 180ms ease;
   z-index: 102;
+}
+
+.overlay-bottom-center.is-visible {
+  transform: translate(-50%, 0);
 }
 
 .overlay-bottom-row {
@@ -951,6 +1080,9 @@ html, body, #root {
   -webkit-backdrop-filter: blur(12px);
   border-radius: 12px;
   padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  animation: contextual-hud-enter 140ms ease-out;
 }
 
 .zoom-btn {
@@ -1009,19 +1141,96 @@ html, body, #root {
   margin: 0 2px;
 }
 
-/* ===== Info Bar ===== */
+/* ===== Compact Status + Action Feedback ===== */
 
-.overlay-info-bar {
+.overlay-status-button {
   display: flex;
   align-items: center;
-  gap: 10px;
-  box-sizing: border-box;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  max-width: min(260px, calc(100vw - 20px));
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  outline: none;
+  color: var(--text-muted);
   background-color: var(--surface-info);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border-radius: 8px;
-  padding: 4px 12px;
-  max-width: min(400px, calc(100vw - 20px));
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.overlay-status-button:hover,
+.overlay-status-button[aria-expanded='true'] {
+  color: var(--text-primary);
+  background-color: var(--surface-overlay-hover);
+  border-color: var(--border-soft);
+}
+
+.status-separator {
+  color: var(--text-faint);
+}
+
+.overlay-action-feedback {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+  min-height: 28px;
+  padding: 5px 10px;
+  transform: translateX(-50%);
+  color: var(--text-secondary);
+  background-color: var(--surface-info);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  pointer-events: none;
+  z-index: 103;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  animation: contextual-feedback-enter 160ms ease-out;
+}
+
+.feedback-filename {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-counter {
+  flex: none;
+  color: var(--text-faint);
+}
+
+@keyframes contextual-hud-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes contextual-feedback-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
 }
 
 .info-popover {
@@ -1067,17 +1276,6 @@ html, body, #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.info-filename {
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 400;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 280px;
 }
 
 .info-counter {

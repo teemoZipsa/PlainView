@@ -5,7 +5,7 @@ A lightweight, ad-free image viewer for Windows.
 [한국어 문서](README.ko.md)
 
 > Open an image and see only the image.
-> Move the mouse to reveal the minimal overlay controls.
+> Move the pointer to an edge to reveal only the controls needed there.
 
 ## Language Support
 
@@ -53,7 +53,8 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 
 - **Borderless window** - a minimal UI that keeps the image as the main surface
 - **Quick image opening** - open from the empty-state button, double-click, `Ctrl+O`, or drag and drop
-- **Hover overlay** - translucent controls appear only when needed and auto-hide after 2 seconds
+- **Contextual HUD** - the idle view shows only the image; navigation, window, and view controls appear only at the relevant edge
+- **Dynamic action feedback** - image and zoom changes surface briefly, then hide after the configured duration
 - **Natural folder navigation** - lists same-folder images in human-friendly `1, 2, 10` order for previous/next navigation
 - **Live external changes** - watches the current folder for added, deleted, or replaced files, with focus refresh and `F5` as fallbacks
 - **Large-folder responsiveness** - scans and sorts folders in the background and stops obsolete image preloads
@@ -75,7 +76,7 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Rotation and direct zoom input** - view-only 90-degree rotation and numeric zoom entry from the bottom scale label
 - **Drag and drop** - open an image by dropping it into the window
 - **Recoverable error view** - continue with Retry, Next image, or Show in folder actions
-- **Compact settings panel** - configure language, default view, looping, remembered position, and control hide delay
+- **Compact settings panel** - configure language, default view, looping, remembered position, and action feedback duration
 - **Settings persistence** - automatically saves window position, always-on-top state, and viewing preferences
 - **Default Apps helper** - open Windows Default Apps settings directly and explain per-file-type selection
 - **Update check** - compare the current version with the latest public GitHub release and open its download page
