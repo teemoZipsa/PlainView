@@ -375,6 +375,13 @@ pub struct CommandError {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardFormatStatus {
+    image_available: bool,
+    file_available: bool,
+}
+
 struct ActiveFolderWatcher {
     folder: PathBuf,
     _watcher: RecommendedWatcher,
@@ -510,7 +517,19 @@ fn open_with_shell_execute(path: &Path) -> Result<(), CommandError> {
 }
 
 #[cfg(windows)]
-fn copy_file_path_to_clipboard(path: &Path) -> Result<(), CommandError> {
+fn clipboard_has_image_format() -> bool {
+    let has_png = clipboard_win::register_format("PNG")
+        .map(|format| clipboard_win::raw::is_format_avail(format.get()))
+        .unwrap_or(false);
+
+    has_png
+        || clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_DIBV5)
+        || clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_DIB)
+        || clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_BITMAP)
+}
+
+#[cfg(windows)]
+fn append_file_path_to_clipboard(path: &Path) -> Result<ClipboardFormatStatus, CommandError> {
     let path_text = path_to_string(path)?;
     let _clipboard = clipboard_win::Clipboard::new_attempts(10).map_err(|error| {
         command_error(
@@ -519,7 +538,9 @@ fn copy_file_path_to_clipboard(path: &Path) -> Result<(), CommandError> {
         )
     })?;
 
-    clipboard_win::raw::set_file_list_with(&[path_text.as_str()], clipboard_win::options::DoClear)
+    // Image formats are written immediately before this command. Preserve them
+    // and add CF_HDROP so each paste target can choose pixels or the file object.
+    clipboard_win::raw::set_file_list_with(&[path_text.as_str()], clipboard_win::options::NoClear)
         .map_err(|error| {
             command_error(
                 "file_clipboard_failed",
@@ -534,11 +555,14 @@ fn copy_file_path_to_clipboard(path: &Path) -> Result<(), CommandError> {
         let _ = clipboard_win::raw::set_without_clear(format.get(), &copy_effect);
     }
 
-    Ok(())
+    Ok(ClipboardFormatStatus {
+        image_available: clipboard_has_image_format(),
+        file_available: clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_HDROP),
+    })
 }
 
 #[cfg(not(windows))]
-fn copy_file_path_to_clipboard(_path: &Path) -> Result<(), CommandError> {
+fn append_file_path_to_clipboard(_path: &Path) -> Result<ClipboardFormatStatus, CommandError> {
     Err(command_error(
         "platform_unsupported",
         "Copying a file object is only supported on Windows.",
@@ -1529,13 +1553,13 @@ fn open_default_apps_settings() -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-fn copy_file_to_clipboard(path: String) -> Result<(), CommandError> {
+fn append_file_to_clipboard(path: String) -> Result<ClipboardFormatStatus, CommandError> {
     let file = PathBuf::from(&path);
     if !file.is_file() {
         return Err(command_error("file_not_found", "Image file not found."));
     }
 
-    copy_file_path_to_clipboard(&file)
+    append_file_path_to_clipboard(&file)
 }
 
 #[tauri::command]
@@ -1861,7 +1885,7 @@ pub fn run() {
             restore_window_bounds,
             open_with_default_app,
             open_default_apps_settings,
-            copy_file_to_clipboard,
+            append_file_to_clipboard,
             show_open_with_dialog,
             show_file_properties,
             move_file_to_folder,

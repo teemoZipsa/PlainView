@@ -11,8 +11,7 @@ interface ContextMenuProps {
   submenuVerticalDirection: 'down' | 'up';
   customApps: CustomOpenApp[];
   t: TFunction;
-  onCopyImage: () => void;
-  onCopyFile: () => void;
+  onCopy: () => void;
   onCopyPath: () => void;
   onReveal: () => void;
   onOpenDefault: () => void;
@@ -26,8 +25,17 @@ interface ContextMenuProps {
   onRegisterApp: () => void;
   onManageApps: () => void;
   onPrint: () => void;
+  onShowAbout: () => void;
   onDismiss: () => void;
 }
+
+type MenuSection = 'open' | 'files';
+
+const closedSections = { open: false, files: false };
+const getOpenSections = (section: MenuSection) =>
+  section === 'open'
+    ? { open: true, files: false }
+    : { open: false, files: true };
 
 export default function ContextMenu({
   menuRef,
@@ -37,8 +45,7 @@ export default function ContextMenu({
   submenuVerticalDirection,
   customApps,
   t,
-  onCopyImage,
-  onCopyFile,
+  onCopy,
   onCopyPath,
   onReveal,
   onOpenDefault,
@@ -52,9 +59,10 @@ export default function ContextMenu({
   onRegisterApp,
   onManageApps,
   onPrint,
+  onShowAbout,
   onDismiss,
 }: ContextMenuProps) {
-  const [openSections, setOpenSections] = useState({ open: false, files: false });
+  const [openSections, setOpenSections] = useState(closedSections);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const isStacked = submenuDirection === 'stacked';
 
@@ -80,14 +88,8 @@ export default function ContextMenu({
 
       event.preventDefault();
       event.stopPropagation();
-      const section = trigger.dataset.menuSection as 'open' | 'files';
-      if (isStacked) {
-        setOpenSections(
-          section === 'open'
-            ? { open: true, files: false }
-            : { open: false, files: true }
-        );
-      }
+      const section = trigger.dataset.menuSection as MenuSection;
+      setOpenSections(getOpenSections(section));
       globalThis.setTimeout(() => {
         trigger.parentElement
           ?.querySelector<HTMLButtonElement>(
@@ -108,9 +110,7 @@ export default function ContextMenu({
 
       event.preventDefault();
       event.stopPropagation();
-      if (isStacked) {
-        setOpenSections({ open: false, files: false });
-      }
+      setOpenSections(closedSections);
       trigger.focus({ preventScroll: true });
       return;
     }
@@ -135,13 +135,20 @@ export default function ContextMenu({
     items[nextIndex]?.focus();
   };
 
-  const toggleSection = (section: 'open' | 'files') => {
-    if (!isStacked) return;
+  const toggleSection = (section: MenuSection) => {
     setOpenSections((current) =>
-      section === 'open'
-        ? { open: !current.open, files: false }
-        : { open: false, files: !current.files }
+      isStacked && current[section] ? closedSections : getOpenSections(section)
     );
+  };
+
+  const openFlyoutSection = (section: MenuSection) => {
+    if (isStacked) return;
+    setOpenSections(getOpenSections(section));
+  };
+
+  const closeFlyoutSection = () => {
+    if (isStacked) return;
+    setOpenSections(closedSections);
   };
 
   return (
@@ -161,25 +168,25 @@ export default function ContextMenu({
         className="context-menu-item"
         type="button"
         role="menuitem"
-        onClick={onCopyImage}
+        onClick={onCopy}
       >
-        <span>{t('menu.copyImage')}</span>
+        <span>{t('menu.copy')}</span>
         <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+C</kbd>
-      </button>
-      <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyFile}>
-        <span>{t('menu.copyFile')}</span>
-        <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+Shift+C</kbd>
       </button>
 
       <div className="context-menu-divider" role="separator" />
 
-      <div className={`context-menu-parent submenu-${submenuDirection}`}>
+      <div
+        className={`context-menu-parent submenu-${submenuDirection}`}
+        onMouseEnter={() => openFlyoutSection('open')}
+        onMouseLeave={closeFlyoutSection}
+      >
         <button
           className="context-menu-item"
           type="button"
           role="menuitem"
           aria-haspopup="menu"
-          aria-expanded={isStacked ? openSections.open : undefined}
+          aria-expanded={openSections.open}
           aria-controls="context-open-submenu"
           data-menu-section="open"
           onClick={() => toggleSection('open')}
@@ -233,13 +240,17 @@ export default function ContextMenu({
         </div>
       </div>
 
-      <div className={`context-menu-parent submenu-${submenuDirection}`}>
+      <div
+        className={`context-menu-parent submenu-${submenuDirection}`}
+        onMouseEnter={() => openFlyoutSection('files')}
+        onMouseLeave={closeFlyoutSection}
+      >
         <button
           className="context-menu-item"
           type="button"
           role="menuitem"
           aria-haspopup="menu"
-          aria-expanded={isStacked ? openSections.files : undefined}
+          aria-expanded={openSections.files}
           aria-controls="context-file-submenu"
           data-menu-section="files"
           onClick={() => toggleSection('files')}
@@ -295,6 +306,17 @@ export default function ContextMenu({
       <button className="context-menu-item" type="button" role="menuitem" onClick={onPrint}>
         <span>{t('menu.print')}</span>
         <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+P</kbd>
+      </button>
+
+      <div className="context-menu-divider" role="separator" />
+
+      <button
+        className="context-menu-item"
+        type="button"
+        role="menuitem"
+        onClick={onShowAbout}
+      >
+        <span>{t('menu.about')}</span>
       </button>
     </div>
   );

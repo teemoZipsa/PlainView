@@ -20,8 +20,7 @@ const customApps: CustomOpenApp[] = [
 ];
 
 const callbacks = () => ({
-  onCopyImage: vi.fn(),
-  onCopyFile: vi.fn(),
+  onCopy: vi.fn(),
   onCopyPath: vi.fn(),
   onReveal: vi.fn(),
   onOpenDefault: vi.fn(),
@@ -35,6 +34,7 @@ const callbacks = () => ({
   onRegisterApp: vi.fn(),
   onManageApps: vi.fn(),
   onPrint: vi.fn(),
+  onShowAbout: vi.fn(),
   onDismiss: vi.fn(),
 });
 
@@ -98,24 +98,45 @@ function getRootButtons() {
 }
 
 describe('ContextMenu', () => {
-  it('keeps the root menu to five actions and exposes shortcut hints', async () => {
-    await renderMenu();
+  it('keeps one adaptive copy action and app info in the root menu', async () => {
+    const handlers = await renderMenu();
 
     const rootButtons = getRootButtons();
     expect(rootButtons).toHaveLength(5);
     expect(rootButtons.map((button) => button.textContent)).toEqual([
-      'menu.copyImageCtrl+C',
-      'menu.copyFileCtrl+Shift+C',
+      'menu.copyCtrl+C',
       'menu.open›',
       'menu.fileActions›',
       'menu.printCtrl+P',
+      'menu.about',
     ]);
     expect(container.querySelectorAll('.context-submenu.nested')).toHaveLength(0);
+
+    await act(async () => rootButtons.at(-1)?.click());
+    expect(handlers.onShowAbout).toHaveBeenCalledTimes(1);
   });
 
   it('uses single-level accordions in a stacked small-window menu', async () => {
     await renderMenu('stacked');
-    const [, , openButton, fileButton] = getRootButtons();
+    const [, openButton, fileButton] = getRootButtons();
+    const [openMenu, fileMenu] = Array.from(
+      container.querySelectorAll<HTMLElement>('.context-submenu')
+    );
+
+    await act(async () => openButton.click());
+    expect(openButton.getAttribute('aria-expanded')).toBe('true');
+    expect(openMenu.classList.contains('is-open')).toBe(true);
+
+    await act(async () => fileButton.click());
+    expect(openButton.getAttribute('aria-expanded')).toBe('false');
+    expect(fileButton.getAttribute('aria-expanded')).toBe('true');
+    expect(openMenu.classList.contains('is-open')).toBe(false);
+    expect(fileMenu.classList.contains('is-open')).toBe(true);
+  });
+
+  it('opens flyout submenus when their parent actions are clicked', async () => {
+    await renderMenu('right');
+    const [, openButton, fileButton] = getRootButtons();
     const [openMenu, fileMenu] = Array.from(
       container.querySelectorAll<HTMLElement>('.context-submenu')
     );
@@ -150,34 +171,37 @@ describe('ContextMenu', () => {
     expect(document.activeElement).toBe(firstButton);
   });
 
-  it('opens and closes a stacked submenu with Right and Left arrows', async () => {
-    await renderMenu('stacked');
-    const [, , openButton] = getRootButtons();
-    const openMenu = container.querySelector<HTMLElement>('#context-open-submenu');
-    const firstOpenAction = openMenu?.querySelector<HTMLButtonElement>(
-      'button.context-menu-item'
-    );
-
-    openButton.focus();
-    await act(async () => {
-      openButton.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+  it.each(['stacked', 'right'] as const)(
+    'opens and closes a %s submenu with Right and Left arrows',
+    async (direction) => {
+      await renderMenu(direction);
+      const [, openButton] = getRootButtons();
+      const openMenu = container.querySelector<HTMLElement>('#context-open-submenu');
+      const firstOpenAction = openMenu?.querySelector<HTMLButtonElement>(
+        'button.context-menu-item'
       );
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-    });
 
-    expect(openButton.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(firstOpenAction);
+      openButton.focus();
+      await act(async () => {
+        openButton.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
+        );
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      });
 
-    await act(async () => {
-      firstOpenAction?.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
-      );
-    });
+      expect(openButton.getAttribute('aria-expanded')).toBe('true');
+      expect(document.activeElement).toBe(firstOpenAction);
 
-    expect(openButton.getAttribute('aria-expanded')).toBe('false');
-    expect(document.activeElement).toBe(openButton);
-  });
+      await act(async () => {
+        firstOpenAction?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
+        );
+      });
+
+      expect(openButton.getAttribute('aria-expanded')).toBe('false');
+      expect(document.activeElement).toBe(openButton);
+    }
+  );
 
   it('dismisses the menu with Escape without invoking an action', async () => {
     const handlers = await renderMenu();
@@ -190,7 +214,7 @@ describe('ContextMenu', () => {
     });
 
     expect(handlers.onDismiss).toHaveBeenCalledTimes(1);
-    expect(handlers.onCopyImage).not.toHaveBeenCalled();
+    expect(handlers.onCopy).not.toHaveBeenCalled();
   });
 
   it('keeps menu scrolling from bubbling into viewer zoom', async () => {

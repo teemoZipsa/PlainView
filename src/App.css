@@ -183,11 +183,9 @@ html, body, #root {
 
 .context-menu {
   max-height: calc(100vh - 16px);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-soft) transparent;
+  /* Flyout submenus are positioned outside the root menu. Keep that overflow
+     visible unless the controller switches a short viewport to stacked mode. */
+  overflow: visible;
 }
 
 .context-menu::-webkit-scrollbar {
@@ -211,6 +209,11 @@ html, body, #root {
 
 .context-menu.stacked {
   width: calc(100vw - 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-soft) transparent;
   scrollbar-gutter: stable;
 }
 
@@ -275,9 +278,7 @@ html, body, #root {
   display: block;
 }
 
-.context-menu-parent:not(.submenu-stacked):hover > .context-submenu,
-.context-menu-parent:not(.submenu-stacked):focus-within > .context-submenu,
-.context-submenu.stacked.is-open {
+.context-submenu.is-open {
   display: block;
 }
 
@@ -391,6 +392,62 @@ html, body, #root {
 
 .app-modal.compact {
   width: min(340px, calc(100vw - 32px));
+}
+
+.about-modal {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.about-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.about-icon {
+  display: flex;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-text);
+  background-color: var(--surface-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+.about-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.about-version {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.about-description {
+  margin-top: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.about-details {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 12px;
+  color: var(--text-faint);
+  font-size: 10px;
 }
 
 .settings-modal {
@@ -749,6 +806,16 @@ html, body, #root {
   display: inline-flex;
   color: #ffffff;
   background: rgba(22, 163, 74, 0.92);
+}
+
+.toast-warning {
+  border-color: rgba(245, 158, 11, 0.62);
+}
+
+.toast-warning .toast-icon {
+  display: inline-flex;
+  color: #ffffff;
+  background: rgba(217, 119, 6, 0.94);
 }
 
 .toast-error {

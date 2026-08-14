@@ -39,8 +39,7 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 | `F` | Fit to screen |
 | `T` | Toggle always on top |
 | `R` | Rotate 90 degrees clockwise |
-| `Ctrl+C` | Copy image contents |
-| `Ctrl+Shift+C` | Copy the file object |
+| `Ctrl+C` | Copy image and file formats |
 | `Ctrl+S` | Save as |
 | `Ctrl+M` | Move to another folder |
 | `Ctrl+P` | Print |
@@ -62,9 +61,8 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Image panning** - drag to pan while zoomed in
 - **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
 - **Window dragging** - drag the image area in default mode, or use the top handle / Alt-drag while zoomed
-- **Context menu** - copy image contents, the file object, or its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, or print with PlainView's built-in print dialog; supports arrow-key, Tab, and Escape navigation
-- **Image content copy** - copy the current image pixels with `Ctrl+C` or the context menu
-- **File copy** - copy the current image as a file object with `Ctrl+Shift+C` or the context menu so it can be pasted into File Explorer, mail, and other compatible apps
+- **Context menu** - copy the image and file formats together or copy its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, print with PlainView's built-in print dialog, or view app version and license details; the empty start screen also offers image open and app info actions; supports arrow-key, Tab, and Escape navigation
+- **Adaptive copy** - one `Ctrl+C` or context-menu action supplies both image pixels and the file object so each paste target can automatically choose the compatible format
 - **File path copy** - copy the current image's full path from the context menu
 - **Save as** - save the original image file with `Ctrl+S` or the context menu
 - **Rename** - rename the current image while preserving its file extension
