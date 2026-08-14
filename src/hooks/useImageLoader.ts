@@ -5,10 +5,13 @@ import {
   RevisionLruCache,
   type ImageRevision,
 } from '../imageCache';
+import { usesFileImageSource } from '../imageFormats';
 
 // ---- LRU Cache with size limit ----
 
 const MAX_CACHE_SIZE = 5;
+const MAX_CACHE_WEIGHT_BYTES = 96 * 1024 * 1024;
+const MAX_TRACKED_REVISIONS = 64;
 let preloadGeneration = 0;
 
 interface CachedImage {
@@ -16,20 +19,28 @@ interface CachedImage {
   fileName: string;
   filePath: string;
   fileSize: number;
-  modifiedTimeMs: number;
+  modifiedTimeNs: string;
   originalExtension: string | null;
 }
 
-const preloadCache = new RevisionLruCache<CachedImage>(MAX_CACHE_SIZE);
+const preloadCache = new RevisionLruCache<CachedImage>(
+  MAX_CACHE_SIZE,
+  MAX_CACHE_WEIGHT_BYTES,
+  (image) => (image.src.startsWith('data:') ? image.src.length * 2 : 1024)
+);
+// Keep lightweight revision knowledge separate from source caching. Converted
+// images that exceed the byte budget are intentionally not cached, but a focus
+// event should not decode them again unless the file actually changed.
+const loadedRevisionCache = new RevisionLruCache<boolean>(MAX_TRACKED_REVISIONS);
 
 const revisionFromData = (data: LoadedImageData): ImageRevision => ({
   fileSize: data.fileSize,
-  modifiedTimeMs: data.modifiedTimeMs,
+  modifiedTimeNs: data.modifiedTimeNs,
 });
 
 function buildImageSource(data: LoadedImageData): string {
   if (data.sourceKind === 'file') {
-    const revision = `${data.modifiedTimeMs}-${data.fileSize}`;
+    const revision = `${data.modifiedTimeNs}-${data.fileSize}`;
     return `${convertFileSrc(data.filePath)}?plainviewRevision=${revision}`;
   }
 
@@ -51,6 +62,13 @@ function imageLoadFailedError(originalExtension: string | null): Error | Command
   return new Error('image_load_failed');
 }
 
+async function decodePreloadedImage(src: string): Promise<void> {
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = src;
+  await image.decode();
+}
+
 // ---- Hook ----
 
 export function useImageLoader() {
@@ -68,6 +86,7 @@ export function useImageLoader() {
     const revision = await invoke<ImageRevision>('get_image_revision', { path: filePath });
     const cached = preloadCache.get(filePath, revision);
     if (cached) {
+      loadedRevisionCache.set(filePath, revision, true);
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve({
@@ -87,15 +106,17 @@ export function useImageLoader() {
     try {
       const data = await invoke<LoadedImageData>('read_image', { path: filePath });
       const src = buildImageSource(data);
+      const loadedRevision = revisionFromData(data);
 
-      preloadCache.set(filePath, revisionFromData(data), {
+      preloadCache.set(filePath, loadedRevision, {
         src,
         fileName: data.fileName,
         filePath: data.filePath,
         fileSize: data.fileSize,
-        modifiedTimeMs: data.modifiedTimeMs,
+        modifiedTimeNs: data.modifiedTimeNs,
         originalExtension: data.originalExtension,
       });
+      loadedRevisionCache.set(filePath, loadedRevision, true);
 
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -124,6 +145,10 @@ export function useImageLoader() {
     const generation = ++preloadGeneration;
     for (const p of paths) {
       if (generation !== preloadGeneration) return;
+      // Converted formats can allocate hundreds of MB across decoded pixels,
+      // PNG output and base64. Load them only when the user actually navigates
+      // to the file instead of speculatively decoding adjacent images.
+      if (!usesFileImageSource(p)) continue;
 
       try {
         const revision = await invoke<ImageRevision>('get_image_revision', { path: p });
@@ -132,15 +157,19 @@ export function useImageLoader() {
 
         const data = await invoke<LoadedImageData>('read_image', { path: p });
         if (generation !== preloadGeneration) return;
+        if (data.sourceKind !== 'file') continue;
         const src = buildImageSource(data);
-        preloadCache.set(p, revisionFromData(data), {
+        const loadedRevision = revisionFromData(data);
+        preloadCache.set(p, loadedRevision, {
           src,
           fileName: data.fileName,
           filePath: data.filePath,
           fileSize: data.fileSize,
-          modifiedTimeMs: data.modifiedTimeMs,
+          modifiedTimeNs: data.modifiedTimeNs,
           originalExtension: data.originalExtension,
         });
+        loadedRevisionCache.set(p, loadedRevision, true);
+        await decodePreloadedImage(src);
       } catch {
         // Silently skip failed preloads
       }
@@ -188,12 +217,13 @@ export function useImageLoader() {
 
   const invalidateImage = useCallback((filePath: string) => {
     preloadCache.delete(filePath);
+    loadedRevisionCache.delete(filePath);
   }, []);
 
   const isImageStale = useCallback(async (filePath: string) => {
     try {
       const revision = await invoke<ImageRevision>('get_image_revision', { path: filePath });
-      return !preloadCache.isCurrent(filePath, revision);
+      return !loadedRevisionCache.isCurrent(filePath, revision);
     } catch {
       return true;
     }

@@ -5,22 +5,34 @@ import { useCallback, useEffect, useRef } from 'react';
 
 const FOLDER_CHANGED_EVENT = 'plainview://folder-changed';
 const FOLDER_CHANGE_DEBOUNCE_MS = 200;
+const normalizePath = (path: string) => path.replace(/\//g, '\\').toLowerCase();
 
 interface UseFolderSyncOptions {
   filePath: string | null;
-  onRefresh: () => void | Promise<void>;
+  onRefresh: (forceReload: boolean) => void | Promise<void>;
+}
+
+interface FolderChangePayload {
+  folder: string;
+  paths: string[];
 }
 
 export function useFolderSync({ filePath, onRefresh }: UseFolderSyncOptions) {
   const refreshRef = useRef(onRefresh);
+  const filePathRef = useRef(filePath);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const forceReloadRef = useRef(false);
   refreshRef.current = onRefresh;
+  filePathRef.current = filePath;
 
-  const scheduleRefresh = useCallback((delayMs: number) => {
+  const scheduleRefresh = useCallback((delayMs: number, forceReload = false) => {
+    forceReloadRef.current ||= forceReload;
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
-      void refreshRef.current();
+      const shouldForceReload = forceReloadRef.current;
+      forceReloadRef.current = false;
+      void refreshRef.current(shouldForceReload);
     }, delayMs);
   }, []);
 
@@ -40,8 +52,19 @@ export function useFolderSync({ filePath, onRefresh }: UseFolderSyncOptions) {
 
     const setup = async () => {
       try {
-        const unlisten = await listen<string>(FOLDER_CHANGED_EVENT, () => {
-          scheduleRefresh(FOLDER_CHANGE_DEBOUNCE_MS);
+        const unlisten = await listen<FolderChangePayload>(FOLDER_CHANGED_EVENT, ({ payload }) => {
+          const normalizedCurrentPath = filePathRef.current
+            ? normalizePath(filePathRef.current)
+            : null;
+          const changedCurrentFile =
+            !payload.paths.length ||
+            Boolean(
+              normalizedCurrentPath &&
+                payload.paths.some(
+                  (path) => normalizePath(path) === normalizedCurrentPath
+                )
+            );
+          scheduleRefresh(FOLDER_CHANGE_DEBOUNCE_MS, changedCurrentFile);
         });
         if (cancelled) {
           unlisten();
@@ -54,7 +77,7 @@ export function useFolderSync({ filePath, onRefresh }: UseFolderSyncOptions) {
 
       try {
         const unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-          if (focused) scheduleRefresh(0);
+          if (focused) scheduleRefresh(0, false);
         });
         if (cancelled) {
           unlisten();
@@ -74,6 +97,7 @@ export function useFolderSync({ filePath, onRefresh }: UseFolderSyncOptions) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
+      forceReloadRef.current = false;
       unlistenFolder?.();
       unlistenFocus?.();
     };

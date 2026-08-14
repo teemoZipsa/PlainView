@@ -51,7 +51,7 @@ afterEach(async () => {
 
 describe('SettingsModal', () => {
   it('returns the edited viewer preferences', async () => {
-    const onSave = vi.fn();
+    const onSave = vi.fn(async () => true);
 
     await act(async () => {
       root.render(
@@ -91,9 +91,48 @@ describe('SettingsModal', () => {
     });
   });
 
+  it('keeps the modal open and blocks cancellation while settings are saving', async () => {
+    const onCancel = vi.fn();
+    let finishSave: ((saved: boolean) => void) | undefined;
+    const onSave = vi.fn(
+      () => new Promise<boolean>((resolve) => {
+        finishSave = resolve;
+      })
+    );
+
+    await act(async () => {
+      root.render(
+        <SettingsModal
+          {...updateProps()}
+          initialSettings={initialSettings}
+          t={t}
+          onCancel={onCancel}
+          onSave={onSave}
+        />
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.app-modal-button.primary')?.click();
+    });
+
+    expect(container.querySelector('.settings-modal')?.getAttribute('aria-busy')).toBe('true');
+    expect(container.querySelector<HTMLButtonElement>('.app-modal-button.secondary')?.disabled).toBe(true);
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>('.settings-modal')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await act(async () => finishSave?.(false));
+    expect(container.querySelector('.settings-modal')?.getAttribute('aria-busy')).toBe('false');
+  });
+
   it('closes on Escape without saving', async () => {
     const onCancel = vi.fn();
-    const onSave = vi.fn();
+    const onSave = vi.fn(async () => true);
 
     await act(async () => {
       root.render(
@@ -128,7 +167,7 @@ describe('SettingsModal', () => {
             initialSettings={initialSettings}
             t={t}
             onCancel={vi.fn()}
-            onSave={vi.fn()}
+            onSave={vi.fn(async () => true)}
           />
         </div>
       );
@@ -153,7 +192,7 @@ describe('SettingsModal', () => {
           initialSettings={initialSettings}
           t={t}
           onCancel={vi.fn()}
-          onSave={vi.fn()}
+          onSave={vi.fn(async () => true)}
           onOpenDefaultAppsSettings={onOpenDefaultAppsSettings}
         />
       );
@@ -186,7 +225,7 @@ describe('SettingsModal', () => {
           initialSettings={initialSettings}
           t={t}
           onCancel={vi.fn()}
-          onSave={vi.fn()}
+          onSave={vi.fn(async () => true)}
           onCheckForUpdates={onCheckForUpdates}
           onOpenRelease={onOpenRelease}
           onOpenDefaultAppsSettings={vi.fn()}
@@ -218,7 +257,7 @@ describe('SettingsModal', () => {
           initialSettings={initialSettings}
           t={t}
           onCancel={vi.fn()}
-          onSave={vi.fn()}
+          onSave={vi.fn(async () => true)}
           onCheckForUpdates={vi.fn(async () => {
             throw new Error('offline');
           })}

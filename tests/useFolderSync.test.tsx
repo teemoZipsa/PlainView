@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(() => Promise.resolve()),
-  folderListener: null as null | (() => void),
+  folderListener: null as null | ((event: {
+    payload: { folder: string; paths: string[] };
+  }) => void),
   focusListener: null as null | ((event: { payload: boolean }) => void),
   unlistenFolder: vi.fn(),
   unlistenFocus: vi.fn(),
@@ -17,7 +19,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async (_event: string, callback: () => void) => {
+  listen: vi.fn(async (_event: string, callback: (event: {
+    payload: { folder: string; paths: string[] };
+  }) => void) => {
     mocks.folderListener = callback;
     return mocks.unlistenFolder;
   }),
@@ -42,7 +46,7 @@ function Harness({
   onRefresh,
 }: {
   filePath: string | null;
-  onRefresh: () => void;
+  onRefresh: (forceReload: boolean) => void;
 }) {
   useFolderSync({ filePath, onRefresh });
   return null;
@@ -82,13 +86,23 @@ describe('useFolderSync', () => {
       filePath: 'C:\\images\\one.png',
     });
 
-    mocks.folderListener?.();
-    mocks.folderListener?.();
+    const currentFileEvent = {
+      payload: { folder: 'C:\\images', paths: ['C:\\images\\one.png'] },
+    };
+    mocks.folderListener?.(currentFileEvent);
+    mocks.folderListener?.(currentFileEvent);
     await act(async () => vi.advanceTimersByTime(199));
     expect(onRefresh).not.toHaveBeenCalled();
 
     await act(async () => vi.advanceTimersByTime(1));
     expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenLastCalledWith(true);
+
+    mocks.folderListener?.({
+      payload: { folder: 'C:\\images', paths: ['C:\\images\\two.png'] },
+    });
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(onRefresh).toHaveBeenLastCalledWith(false);
   });
 
   it('refreshes on focus and clears native watching without a file', async () => {
@@ -102,6 +116,7 @@ describe('useFolderSync', () => {
     mocks.focusListener?.({ payload: true });
     await act(async () => vi.runOnlyPendingTimers());
     expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledWith(false);
 
     await act(async () => {
       root.render(<Harness filePath={null} onRefresh={onRefresh} />);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { TFunction } from '../i18n';
 import type {
   FitMode,
@@ -6,6 +6,7 @@ import type {
   SettingsDraft,
 } from '../types';
 import type { UpdateCheckResult } from '../updateCheck';
+import { handleDialogKeyDown } from '../modalKeyboard';
 
 type UpdateState =
   | { kind: 'idle' }
@@ -20,7 +21,7 @@ interface SettingsModalProps {
   currentVersion: string;
   t: TFunction;
   onCancel: () => void;
-  onSave: (settings: SettingsDraft) => void;
+  onSave: (settings: SettingsDraft) => Promise<boolean>;
   onCheckForUpdates: () => Promise<UpdateCheckResult>;
   onOpenRelease: (url: string) => void;
   onOpenDefaultAppsSettings: () => void;
@@ -38,6 +39,8 @@ export default function SettingsModal({
 }: SettingsModalProps) {
   const [draft, setDraft] = useState(initialSettings);
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: 'idle' });
+  const [isSaving, setIsSaving] = useState(false);
+  const isSavingRef = useRef(false);
 
   const updateDraft = <Key extends keyof SettingsDraft>(
     key: Key,
@@ -63,20 +66,36 @@ export default function SettingsModal({
     }
   };
 
+  const requestCancel = () => {
+    if (!isSavingRef.current) onCancel();
+  };
+
+  const handleSave = async () => {
+    if (isSavingRef.current) return;
+    isSavingRef.current = true;
+    setIsSaving(true);
+    const saved = await onSave(draft).catch(() => false);
+    if (!saved) {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+  };
+
   return (
-    <div className="modal-backdrop" onMouseDown={onCancel}>
+    <div className="modal-backdrop" onMouseDown={requestCancel}>
       <div
         className="app-modal settings-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
+        aria-busy={isSaving}
         tabIndex={-1}
         autoFocus
         onMouseDown={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') onCancel();
-        }}
+        onKeyDown={(event) =>
+          handleDialogKeyDown(event, event.currentTarget, requestCancel)
+        }
       >
         <h2 id="settings-modal-title" className="app-modal-title">
           {t('settings.title')}
@@ -90,6 +109,7 @@ export default function SettingsModal({
               id="settings-language"
               className="settings-select"
               value={draft.locale}
+              disabled={isSaving}
               onChange={(event) =>
                 updateDraft('locale', event.target.value as LocalePreference)
               }
@@ -106,6 +126,7 @@ export default function SettingsModal({
               id="settings-fit-mode"
               className="settings-select"
               value={draft.defaultFitMode}
+              disabled={isSaving}
               onChange={(event) =>
                 updateDraft('defaultFitMode', event.target.value as FitMode)
               }
@@ -122,6 +143,7 @@ export default function SettingsModal({
               id="settings-overlay-delay"
               className="settings-select"
               value={draft.overlayHideDelayMs}
+              disabled={isSaving}
               onChange={(event) =>
                 updateDraft('overlayHideDelayMs', Number(event.target.value))
               }
@@ -136,6 +158,7 @@ export default function SettingsModal({
             <input
               type="checkbox"
               checked={draft.loopNavigation}
+              disabled={isSaving}
               onChange={(event) =>
                 updateDraft('loopNavigation', event.target.checked)
               }
@@ -150,6 +173,7 @@ export default function SettingsModal({
             <input
               type="checkbox"
               checked={draft.rememberWindowPosition}
+              disabled={isSaving}
               onChange={(event) =>
                 updateDraft('rememberWindowPosition', event.target.checked)
               }
@@ -174,6 +198,7 @@ export default function SettingsModal({
               <button
                 type="button"
                 className="app-modal-button secondary settings-default-apps-open"
+                disabled={isSaving}
                 onClick={onOpenDefaultAppsSettings}
               >
                 {t('settings.openDefaultApps')}
@@ -218,7 +243,7 @@ export default function SettingsModal({
               <button
                 type="button"
                 className="app-modal-button secondary settings-update-check"
-                disabled={updateState.kind === 'checking'}
+                disabled={isSaving || updateState.kind === 'checking'}
                 onClick={() => void handleCheckForUpdates()}
               >
                 {updateState.kind === 'checking'
@@ -229,6 +254,7 @@ export default function SettingsModal({
                 <button
                   type="button"
                   className="app-modal-button primary settings-update-open"
+                  disabled={isSaving}
                   onClick={() => onOpenRelease(updateState.result.releaseUrl)}
                 >
                   {t('settings.openRelease')}
@@ -242,14 +268,16 @@ export default function SettingsModal({
           <button
             type="button"
             className="app-modal-button secondary"
-            onClick={onCancel}
+            disabled={isSaving}
+            onClick={requestCancel}
           >
             {t('button.cancel')}
           </button>
           <button
             type="button"
             className="app-modal-button primary"
-            onClick={() => onSave(draft)}
+            disabled={isSaving}
+            onClick={() => void handleSave()}
           >
             {t('button.save')}
           </button>

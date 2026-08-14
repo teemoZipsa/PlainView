@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { SUPPORTED_IMAGE_EXTENSIONS } from '../src/imageFormats.ts';
+import {
+  SUPPORTED_IMAGE_EXTENSIONS,
+  usesFileImageSource,
+} from '../src/imageFormats.ts';
 
 test('the image picker matches the Windows file-association extension list', async () => {
   const config = JSON.parse(
@@ -15,4 +18,11 @@ test('the image picker matches the Windows file-association extension list', asy
     [...SUPPORTED_IMAGE_EXTENSIONS].sort(),
     [...registered].sort()
   );
+});
+
+test('only WebView-native formats are eligible for speculative preload', () => {
+  assert.equal(usesFileImageSource('C:\\images\\photo.JPEG'), true);
+  assert.equal(usesFileImageSource('C:\\images\\animation.gif'), true);
+  assert.equal(usesFileImageSource('C:\\images\\large.tiff'), false);
+  assert.equal(usesFileImageSource('C:\\images\\layered.psd'), false);
 });

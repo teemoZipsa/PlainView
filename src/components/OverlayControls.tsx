@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { OverlayRegion } from '../hooks/useOverlayVisibility';
 import type { TFunction } from '../i18n';
 import type { BackgroundMode } from '../types';
+import { formatZoomPercent, isOriginalZoom, MAX_ZOOM, MIN_ZOOM } from '../zoom';
 
 interface ImageInfo {
   filePath: string | null;
@@ -66,7 +67,9 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
 }) => {
   const hasImage = Boolean(imageInfo.filePath) && totalImages > 0;
   const statusRef = useRef<HTMLButtonElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const editSessionRef = useRef(false);
+  const initialZoomDraftRef = useRef('');
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousZoomRef = useRef(zoom);
   const previousPathRef = useRef(imageInfo.filePath);
@@ -123,6 +126,21 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
     }
   }, [activeRegion]);
 
+  useEffect(() => {
+    if (!isMoreOpen) return;
+
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setIsMoreOpen(false);
+      moreButtonRef.current?.focus({ preventScroll: true });
+    };
+
+    window.addEventListener('keydown', handleEscape, true);
+    return () => window.removeEventListener('keydown', handleEscape, true);
+  }, [isMoreOpen]);
+
   useEffect(() => clearFeedbackTimer, [clearFeedbackTimer]);
 
   const handleButtonClick = (event: React.MouseEvent, action: () => void) => {
@@ -168,12 +186,15 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   const startZoomEdit = (event: React.MouseEvent) => {
     event.stopPropagation();
     editSessionRef.current = true;
-    setZoomDraft(`${Math.round(zoom * 100)}`);
+    const draft = formatZoomPercent(zoom);
+    initialZoomDraftRef.current = draft;
+    setZoomDraft(draft);
     setIsEditingZoom(true);
   };
 
   const cancelZoomEdit = () => {
     editSessionRef.current = false;
+    initialZoomDraftRef.current = '';
     setIsEditingZoom(false);
     setZoomDraft('');
   };
@@ -184,12 +205,23 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
 
     const normalized = zoomDraft.trim().replace(/%/g, '');
     const parsed = Number(normalized);
+    const isUnchanged = normalized === initialZoomDraftRef.current;
+    initialZoomDraftRef.current = '';
     setIsEditingZoom(false);
     setZoomDraft('');
 
     if (!normalized || !Number.isFinite(parsed)) return;
+    if (isUnchanged) {
+      // Confirming an exact 100% is also an explicit request to recenter and
+      // return to 1:1, even if the numeric value did not change.
+      if (isOriginalZoom(zoom)) onSetZoom(1);
+      return;
+    }
 
-    const clampedPercent = Math.max(10, Math.min(1000, parsed));
+    const clampedPercent = Math.max(
+      MIN_ZOOM * 100,
+      Math.min(MAX_ZOOM * 100, parsed)
+    );
     onSetZoom(clampedPercent / 100);
   };
 
@@ -210,6 +242,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       <div className={`overlay-top-right ${activeRegion === 'top-right' ? 'is-visible' : ''}`}>
         <div className="overlay-window-controls">
           <button
+            ref={moreButtonRef}
             type="button"
             className={`overlay-btn more-btn ${isMoreOpen ? 'active' : ''}`}
             title={t('overlay.moreTitle')}
@@ -277,12 +310,6 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             className="overlay-more-actions"
             role="group"
             aria-label={t('overlay.moreAria')}
-            onKeyDown={(event) => {
-              if (event.key !== 'Escape') return;
-              event.preventDefault();
-              event.stopPropagation();
-              setIsMoreOpen(false);
-            }}
           >
             <button
               type="button"
@@ -465,7 +492,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
                   className="zoom-label zoom-input"
                   value={zoomDraft}
                   autoFocus
-                  inputMode="numeric"
+                  inputMode="decimal"
                   aria-label={t('overlay.zoomInputAria')}
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => event.stopPropagation()}
@@ -492,7 +519,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={startZoomEdit}
                 >
-                  {Math.round(zoom * 100)}%
+                  {formatZoomPercent(zoom)}%
                 </button>
               )}
               <button
@@ -595,7 +622,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             onMouseMove={updateInfoPopoverPosition}
             onMouseLeave={() => setIsInfoVisible(false)}
           >
-            <span className="status-zoom">{Math.round(zoom * 100)}%</span>
+            <span className="status-zoom">{formatZoomPercent(zoom)}%</span>
             {totalImages > 1 && (
               <>
                 <span className="status-separator" aria-hidden="true">·</span>
@@ -611,7 +638,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       {hasImage && feedbackKind && activeRegion !== 'bottom' && (
         <div className={`overlay-action-feedback ${feedbackKind}`} role="status" aria-live="polite">
           {feedbackKind === 'zoom' ? (
-            <span>{Math.round(zoom * 100)}%</span>
+            <span>{formatZoomPercent(zoom)}%</span>
           ) : (
             <>
               <span className="feedback-filename">{fileName}</span>

@@ -108,4 +108,21 @@ describe('useKeyboardShortcuts', () => {
     expect(handlers.onPrint).not.toHaveBeenCalled();
     expect(handlers.onRename).not.toHaveBeenCalled();
   });
+
+  it('preserves native keyboard behavior inside interactive controls', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+    const button = document.createElement('button');
+    const label = document.createElement('span');
+    button.append(label);
+    container.append(button);
+
+    label.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    button.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true })
+    );
+
+    expect(handlers.onNextImage).not.toHaveBeenCalled();
+    expect(handlers.onCopy).not.toHaveBeenCalled();
+  });
 });

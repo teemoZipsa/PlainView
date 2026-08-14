@@ -161,8 +161,73 @@ describe('OverlayControls', () => {
     expect(onZoomOut).toHaveBeenCalledTimes(1);
   });
 
+  it('does not quantize a precise zoom when editing is committed unchanged', async () => {
+    const onSetZoom = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <OverlayControls
+          {...createProps({
+            ...imageProps,
+            activeRegion: 'bottom',
+            zoom: 0.996,
+            onSetZoom,
+          })}
+        />
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.overlay-status-button')?.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.zoom-label-button')?.click();
+    });
+
+    const input = container.querySelector<HTMLInputElement>('.zoom-input');
+    expect(input?.value).toBe('99.6');
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(onSetZoom).not.toHaveBeenCalled();
+  });
+
+  it('reapplies an unchanged 100% value as a 1:1 reset', async () => {
+    const onSetZoom = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <OverlayControls
+          {...createProps({
+            ...imageProps,
+            activeRegion: 'bottom',
+            zoom: 1,
+            onSetZoom,
+          })}
+        />
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.overlay-status-button')?.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.zoom-label-button')?.click();
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLInputElement>('.zoom-input')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(onSetZoom).toHaveBeenCalledWith(1);
+  });
+
   it('keeps secondary tools behind the top-right more control', async () => {
     const onOpenSettings = vi.fn();
+    const onClose = vi.fn();
 
     await act(async () => {
       root.render(
@@ -170,6 +235,7 @@ describe('OverlayControls', () => {
           {...createProps({
             activeRegion: 'top-right',
             onOpenSettings,
+            onClose,
           })}
         />
       );
@@ -184,6 +250,21 @@ describe('OverlayControls', () => {
     });
 
     expect(container.querySelector('.overlay-more-actions')).not.toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      );
+    });
+
+    const moreButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="overlay.moreAria"]'
+    );
+    expect(container.querySelector('.overlay-more-actions')).toBeNull();
+    expect(document.activeElement).toBe(moreButton);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => moreButton?.click());
 
     await act(async () => {
       container

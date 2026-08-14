@@ -5,7 +5,7 @@ export interface LoadedImageData {
   fileName: string;
   filePath: string;
   fileSize: number;
-  modifiedTimeMs: number;
+  modifiedTimeNs: string;
   originalExtension: string | null;
   width: number | null;
   height: number | null;

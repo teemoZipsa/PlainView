@@ -24,13 +24,13 @@ interface KeyboardShortcutsProps {
   isEnabled?: () => boolean;
 }
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
 
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target.isContentEditable
+  return Boolean(
+    target.closest(
+      'button, a[href], input, textarea, select, [contenteditable="true"], [role="button"], [role="menuitem"]'
+    )
   );
 }
 
@@ -91,8 +91,9 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Avoid shortcuts when typing in inputs
-      if (isEditableTarget(e.target)) {
+      // Let focused controls keep their native keyboard behavior. In
+      // particular, Space must activate a button instead of navigating.
+      if (isInteractiveTarget(e.target)) {
         return;
       }
 

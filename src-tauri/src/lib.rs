@@ -7,12 +7,15 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::ffi::OsString;
-use std::fs;
-use std::io::{Cursor, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering as AtomicOrdering},
+    Mutex,
+};
 use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
@@ -55,7 +58,7 @@ const UNSUPPORTED_HEIC_EXTENSIONS: &[&str] = &["heic", "heif"];
 const UNSUPPORTED_RAW_EXTENSIONS: &[&str] = &["raw", "cr2", "nef", "arw"];
 const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
 const ERROR_NO_ASSOCIATION: u32 = 1155;
-const ERROR_NOT_SAME_DEVICE: i32 = 17;
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(windows)]
 const BORDERLESS_SUBCLASS_ID: usize = 0x5056_4E43;
 #[cfg(windows)]
@@ -355,17 +358,24 @@ pub struct ImageData {
     pub file_name: String,
     pub file_path: String,
     pub file_size: u64,
-    pub modified_time_ms: u64,
+    pub modified_time_ns: String,
     pub original_extension: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileRevision {
     pub file_size: u64,
-    pub modified_time_ms: u64,
+    pub modified_time_ns: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FolderChangePayload {
+    folder: String,
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -679,6 +689,138 @@ fn replace_file_atomically(source: &Path, target: &Path) -> std::io::Result<()> 
     fs::rename(source, target)
 }
 
+fn temporary_copy_name(target_name: &std::ffi::OsStr) -> OsString {
+    let sequence = TEMP_FILE_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+    let mut name = OsString::from(".");
+    name.push(target_name);
+    name.push(format!(
+        ".plainview-{}-{}.tmp",
+        std::process::id(),
+        sequence
+    ));
+    name
+}
+
+fn remove_staged_file(path: &Path) {
+    #[cfg(windows)]
+    if let Ok(metadata) = fs::metadata(path) {
+        let mut permissions = metadata.permissions();
+        if permissions.readonly() {
+            // On Windows this only clears FILE_ATTRIBUTE_READONLY. Clippy's
+            // cross-platform warning about Unix mode bits does not apply.
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(path, permissions);
+        }
+    }
+
+    let _ = fs::remove_file(path);
+}
+
+/// Copy into a newly-created sibling file so the visible destination remains
+/// untouched until the entire payload is present and flushed to disk.
+fn stage_file_copy(source: &Path, target: &Path) -> io::Result<PathBuf> {
+    let target_parent = target
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing target folder."))?;
+    let target_name = target
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Missing target file name."))?;
+    let mut input = fs::File::open(source)?;
+    let source_metadata = input.metadata()?;
+
+    for _ in 0..128 {
+        let temporary = target_parent.join(temporary_copy_name(target_name));
+        let mut destination = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+
+        let copy_result = (|| -> io::Result<()> {
+            let copied = io::copy(&mut input, &mut destination)?;
+            if copied != source_metadata.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "Copied file size differs from the original.",
+                ));
+            }
+            destination.sync_all()?;
+            fs::set_permissions(&temporary, source_metadata.permissions())?;
+            Ok(())
+        })();
+        drop(destination);
+
+        if let Err(error) = copy_result {
+            remove_staged_file(&temporary);
+            return Err(error);
+        }
+
+        return Ok(temporary);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "Could not reserve a temporary file name.",
+    ))
+}
+
+#[cfg(windows)]
+fn move_file_without_overwrite(source: &Path, target: &Path) -> io::Result<()> {
+    let source_wide = to_wide_null(source.as_os_str());
+    let target_wide = to_wide_null(target.as_os_str());
+    let success = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            target_wide.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    };
+
+    if success != 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(windows))]
+fn move_file_without_overwrite(source: &Path, target: &Path) -> io::Result<()> {
+    // Creating the hard link is atomic and fails when the destination exists.
+    // Removing the original afterwards gives rename semantics without a
+    // check-then-rename overwrite race.
+    fs::hard_link(source, target)?;
+    if let Err(error) = fs::remove_file(source) {
+        let _ = fs::remove_file(target);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn move_to_unique_target_without_overwrite(
+    source: &Path,
+    target_folder: &Path,
+    file_name: &std::ffi::OsStr,
+) -> io::Result<PathBuf> {
+    for _ in 0..128 {
+        let target = unique_target_path(target_folder, file_name);
+        match move_file_without_overwrite(source, &target) {
+            Ok(()) => return Ok(target),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "Could not reserve a destination file name.",
+    ))
+}
+
 /// Get mime type from extension
 fn get_mime_type(ext: &str) -> &'static str {
     match ext.to_lowercase().as_str() {
@@ -729,16 +871,16 @@ fn uses_original_file_source(ext: &str) -> bool {
 }
 
 fn revision_from_metadata(metadata: &fs::Metadata) -> FileRevision {
-    let modified_time_ms = metadata
+    let modified_time_ns = metadata
         .modified()
         .ok()
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-        .unwrap_or(0);
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|| "0".to_string());
 
     FileRevision {
         file_size: metadata.len(),
-        modified_time_ms,
+        modified_time_ns,
     }
 }
 
@@ -749,6 +891,10 @@ fn file_revision(path: &Path) -> Result<FileRevision, CommandError> {
             format!("Could not read file info: {}", e),
         )
     })?;
+
+    if !metadata.is_file() {
+        return Err(command_error("file_not_found", "Image file not found."));
+    }
 
     Ok(revision_from_metadata(&metadata))
 }
@@ -765,8 +911,16 @@ fn encode_png(image: DynamicImage) -> Result<DecodedImage, CommandError> {
         .write_to(&mut cursor, ImageFormat::Png)
         .map_err(|e| command_error("decode_failed", format!("Could not encode PNG: {}", e)))?;
 
+    let data = cursor.into_inner();
+    if u64::try_from(data.len()).unwrap_or(u64::MAX) > MAX_DECODED_BYTES {
+        return Err(command_error(
+            "image_too_large",
+            "Converted image is too large to display.",
+        ));
+    }
+
     Ok(DecodedImage {
-        data: cursor.into_inner(),
+        data,
         mime_type: "image/png",
         width: Some(width),
         height: Some(height),
@@ -880,6 +1034,23 @@ fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, CommandError> {
         return Err(unsupported_format_error(ext));
     }
 
+    // The JPEG XL decoder streams from the file itself. Avoid reading a second
+    // full copy into memory before opening the decoder.
+    if ext == "jxl" {
+        return decode_jxl(path);
+    }
+
+    if fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+        > MAX_DECODED_BYTES
+    {
+        return Err(command_error(
+            "image_too_large",
+            "Image file is too large to convert safely.",
+        ));
+    }
+
     let data = fs::read(path)
         .map_err(|e| command_error("read_failed", format!("Could not read the file: {}", e)))?;
 
@@ -897,15 +1068,13 @@ fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, CommandError> {
             decode_with_image_crate(&data, ImageFormat::Pnm, "PNM")
         }
         "dds" => decode_dds(&data),
-        "jxl" => decode_jxl(path),
         "psd" => decode_psd(&data),
         _ => Err(unsupported_format_error(ext)),
     }
 }
 
 /// Read an image file and return render metadata.
-#[tauri::command]
-fn read_image(path: String) -> Result<ImageData, CommandError> {
+fn read_image_sync(path: String) -> Result<ImageData, CommandError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
@@ -963,11 +1132,23 @@ fn read_image(path: String) -> Result<ImageData, CommandError> {
         file_name,
         file_path: file_path.to_string_lossy().to_string(),
         file_size: revision.file_size,
-        modified_time_ms: revision.modified_time_ms,
+        modified_time_ns: revision.modified_time_ns,
         original_extension,
         width,
         height,
     })
+}
+
+#[tauri::command]
+async fn read_image(path: String) -> Result<ImageData, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || read_image_sync(path))
+        .await
+        .map_err(|error| {
+            command_error(
+                "read_failed",
+                format!("Could not finish reading the image: {error}"),
+            )
+        })?
 }
 
 fn natural_case_insensitive_cmp(left: &str, right: &str) -> Ordering {
@@ -1144,7 +1325,16 @@ fn watch_image_folder(
     let mut watcher =
         notify::recommended_watcher(move |result: notify::Result<Event>| match result {
             Ok(event) if is_relevant_folder_event(&event) => {
-                let _ = app_handle.emit("plainview://folder-changed", event_folder.clone());
+                let paths = event
+                    .paths
+                    .iter()
+                    .filter_map(|path| path.to_str().map(str::to_owned))
+                    .collect();
+                let payload = FolderChangePayload {
+                    folder: event_folder.clone(),
+                    paths,
+                };
+                let _ = app_handle.emit("plainview://folder-changed", payload);
             }
             Ok(_) => {}
             Err(error) => eprintln!("PlainView folder watcher error: {error}"),
@@ -1612,8 +1802,10 @@ fn show_file_properties(window: WebviewWindow, path: String) -> Result<(), Comma
     }
 }
 
-#[tauri::command]
-fn move_file_to_folder(file_path: String, target_folder: String) -> Result<String, CommandError> {
+fn move_file_to_folder_sync(
+    file_path: String,
+    target_folder: String,
+) -> Result<String, CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
         return Err(command_error("file_not_found", "File not found."));
@@ -1645,24 +1837,23 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
     let file_name = source
         .file_name()
         .ok_or_else(|| command_error("file_not_found", "Could not read file name."))?;
-    let target = unique_target_path(&target_dir_canonical, file_name);
-
-    match fs::rename(&source, &target) {
-        Ok(()) => path_to_string(&target),
-        Err(err) if err.raw_os_error() == Some(ERROR_NOT_SAME_DEVICE) => {
-            let copied =
-                fs::copy(&source, &target).map_err(|e| io_error_to_command("copy_failed", e))?;
-            let source_len = fs::metadata(&source)
-                .map_err(|e| io_error_to_command("copy_failed", e))?
-                .len();
-
-            if copied != source_len {
-                let _ = fs::remove_file(&target);
-                return Err(command_error(
-                    "copy_failed",
-                    "Copied file size differs from the original.",
-                ));
-            }
+    match move_to_unique_target_without_overwrite(&source, &target_dir_canonical, file_name) {
+        Ok(target) => path_to_string(&target),
+        Err(err) if err.kind() == io::ErrorKind::CrossesDevices => {
+            let staging_target = target_dir_canonical.join(file_name);
+            let staged = stage_file_copy(&source, &staging_target)
+                .map_err(|e| io_error_to_command("copy_failed", e))?;
+            let target = match move_to_unique_target_without_overwrite(
+                &staged,
+                &target_dir_canonical,
+                file_name,
+            ) {
+                Ok(target) => target,
+                Err(error) => {
+                    remove_staged_file(&staged);
+                    return Err(io_error_to_command("copy_failed", error));
+                }
+            };
 
             fs::remove_file(&source)
                 .map_err(|e| io_error_to_command("remove_original_failed", e))?;
@@ -1673,7 +1864,21 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
 }
 
 #[tauri::command]
-fn save_image_as(file_path: String, target_path: String) -> Result<String, CommandError> {
+async fn move_file_to_folder(
+    file_path: String,
+    target_folder: String,
+) -> Result<String, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || move_file_to_folder_sync(file_path, target_folder))
+        .await
+        .map_err(|error| {
+            command_error(
+                "unknown",
+                format!("Could not finish moving the file: {error}"),
+            )
+        })?
+}
+
+fn save_image_as_sync(file_path: String, target_path: String) -> Result<String, CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
         return Err(command_error("file_not_found", "File not found."));
@@ -1701,20 +1906,26 @@ fn save_image_as(file_path: String, target_path: String) -> Result<String, Comma
         }
     }
 
-    let copied = fs::copy(&source, &target).map_err(|e| io_error_to_command("save_failed", e))?;
-    let source_len = fs::metadata(&source)
-        .map_err(|e| io_error_to_command("save_failed", e))?
-        .len();
-
-    if copied != source_len {
-        let _ = fs::remove_file(&target);
-        return Err(command_error(
-            "save_failed",
-            "Saved file size differs from the original.",
-        ));
+    let staged =
+        stage_file_copy(&source, &target).map_err(|e| io_error_to_command("save_failed", e))?;
+    if let Err(error) = replace_file_atomically(&staged, &target) {
+        remove_staged_file(&staged);
+        return Err(io_error_to_command("save_failed", error));
     }
 
     path_to_string(&target)
+}
+
+#[tauri::command]
+async fn save_image_as(file_path: String, target_path: String) -> Result<String, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || save_image_as_sync(file_path, target_path))
+        .await
+        .map_err(|error| {
+            command_error(
+                "save_failed",
+                format!("Could not finish saving the image: {error}"),
+            )
+        })?
 }
 
 fn validate_rename_stem(value: &str) -> Result<&str, CommandError> {
@@ -1783,6 +1994,7 @@ fn rename_file(file_path: String, new_name: String) -> Result<String, CommandErr
         return path_to_string(&source);
     }
 
+    let mut renames_same_file = false;
     if target.exists() {
         let source_canonical = fs::canonicalize(&source)
             .map_err(|error| io_error_to_command("rename_failed", error))?;
@@ -1796,9 +2008,17 @@ fn rename_file(file_path: String, new_name: String) -> Result<String, CommandErr
                 "A file with that name already exists.",
             ));
         }
+        renames_same_file = true;
     }
 
-    fs::rename(&source, &target).map_err(|error| {
+    let rename_result = if renames_same_file {
+        // Windows case-only renames resolve both spellings to the same file.
+        fs::rename(&source, &target)
+    } else {
+        move_file_without_overwrite(&source, &target)
+    };
+
+    rename_result.map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             command_error(
                 "file_already_exists",
@@ -1812,14 +2032,25 @@ fn rename_file(file_path: String, new_name: String) -> Result<String, CommandErr
     path_to_string(&target)
 }
 
-#[tauri::command]
-fn move_file_to_trash(file_path: String) -> Result<(), CommandError> {
+fn move_file_to_trash_sync(file_path: String) -> Result<(), CommandError> {
     let source = PathBuf::from(&file_path);
     if !source.is_file() {
         return Err(command_error("file_not_found", "File not found."));
     }
 
     trash::delete(&source).map_err(trash_error_to_command)
+}
+
+#[tauri::command]
+async fn move_file_to_trash(file_path: String) -> Result<(), CommandError> {
+    tauri::async_runtime::spawn_blocking(move || move_file_to_trash_sync(file_path))
+        .await
+        .map_err(|error| {
+            command_error(
+                "trash_failed",
+                format!("Could not finish moving the file to the Recycle Bin: {error}"),
+            )
+        })?
 }
 
 #[tauri::command]
@@ -1987,6 +2218,32 @@ mod tests {
     }
 
     #[test]
+    fn file_revision_serializes_nanosecond_time_without_javascript_number_loss() {
+        let dir = temp_dir("revision-precision");
+        let path = dir.join("image.png");
+        fs::write(&path, b"image bytes").unwrap();
+
+        let revision = file_revision(&path).unwrap();
+        let serialized = serde_json::to_value(&revision).unwrap();
+
+        assert!(revision.modified_time_ns.parse::<u128>().is_ok());
+        assert!(serialized["modifiedTimeNs"].is_string());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn file_revision_rejects_a_directory_with_an_image_extension() {
+        let dir = temp_dir("revision-directory");
+        let fake_image = dir.join("folder.png");
+        fs::create_dir(&fake_image).unwrap();
+
+        let error = file_revision(&fake_image).unwrap_err();
+
+        assert_eq!(error.kind, "file_not_found");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn legacy_settings_receive_new_viewer_defaults() {
         let settings: Settings = serde_json::from_str("{}").unwrap();
 
@@ -2012,6 +2269,15 @@ mod tests {
         assert!(shell_dialog_result_succeeded(0));
         assert!(shell_dialog_result_succeeded(HRESULT_ERROR_CANCELLED));
         assert!(!shell_dialog_result_succeeded(0x8000_4005u32 as i32));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_cross_volume_move_error_uses_the_portable_error_kind() {
+        assert_eq!(
+            io::Error::from_raw_os_error(17).kind(),
+            io::ErrorKind::CrossesDevices
+        );
     }
 
     #[test]
@@ -2165,7 +2431,7 @@ mod tests {
         let path = dir.join("sample.JPG");
         fs::write(&path, b"not decoded in this path").unwrap();
 
-        let data = read_image(path.to_string_lossy().to_string()).unwrap();
+        let data = read_image_sync(path.to_string_lossy().to_string()).unwrap();
 
         assert_eq!(data.source_kind, "file");
         assert!(data.base64.is_none());
@@ -2180,7 +2446,7 @@ mod tests {
         let path = dir.join("sample.heic");
         fs::write(&path, b"unsupported").unwrap();
 
-        let error = read_image(path.to_string_lossy().to_string()).unwrap_err();
+        let error = read_image_sync(path.to_string_lossy().to_string()).unwrap_err();
 
         assert_eq!(error.kind, "unsupported_heic");
 
@@ -2195,7 +2461,7 @@ mod tests {
         fs::write(&path, bytes).unwrap();
 
         let path_string = path.to_string_lossy().to_string();
-        let saved_path = save_image_as(path_string.clone(), path_string).unwrap();
+        let saved_path = save_image_as_sync(path_string.clone(), path_string).unwrap();
 
         assert_eq!(saved_path, path.to_string_lossy());
         assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -2211,7 +2477,7 @@ mod tests {
         let bytes = b"source bytes";
         fs::write(&source, bytes).unwrap();
 
-        let saved_path = save_image_as(
+        let saved_path = save_image_as_sync(
             source.to_string_lossy().to_string(),
             target.to_string_lossy().to_string(),
         )
@@ -2220,6 +2486,88 @@ mod tests {
         assert_eq!(saved_path, target.to_string_lossy());
         assert_eq!(fs::read(&target).unwrap(), bytes);
 
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_image_as_replaces_an_existing_target_without_exposing_partial_bytes() {
+        let dir = temp_dir("save-replace");
+        let source = dir.join("source.png");
+        let target = dir.join("target.png");
+        fs::write(&source, b"new complete image bytes").unwrap();
+        fs::write(&target, b"previous target bytes").unwrap();
+
+        save_image_as_sync(
+            source.to_string_lossy().to_string(),
+            target.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new complete image bytes");
+        assert_eq!(
+            fs::read_dir(&dir)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().contains(".plainview-"))
+                .count(),
+            0
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn failed_staging_leaves_an_existing_target_untouched() {
+        let dir = temp_dir("save-stage-failure");
+        let missing_source = dir.join("missing.png");
+        let target = dir.join("target.png");
+        fs::write(&target, b"keep these bytes").unwrap();
+
+        assert!(stage_file_copy(&missing_source, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"keep these bytes");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_cleanup_removes_a_read_only_temporary_file() {
+        let dir = temp_dir("staged-cleanup");
+        let temporary = dir.join("temporary.tmp");
+        fs::write(&temporary, b"temporary").unwrap();
+        let mut permissions = fs::metadata(&temporary).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&temporary, permissions).unwrap();
+
+        remove_staged_file(&temporary);
+
+        assert!(!temporary.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn move_chooses_a_unique_name_without_overwriting_an_existing_file() {
+        let dir = temp_dir("move-collision");
+        let source_dir = dir.join("source");
+        let target_dir = dir.join("target");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(&target_dir).unwrap();
+        let source = source_dir.join("image.png");
+        let existing = target_dir.join("image.png");
+        fs::write(&source, b"moving image").unwrap();
+        fs::write(&existing, b"existing image").unwrap();
+
+        let moved = move_file_to_folder_sync(
+            source.to_string_lossy().to_string(),
+            target_dir.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        let moved = PathBuf::from(moved);
+
+        assert_eq!(fs::read(&existing).unwrap(), b"existing image");
+        assert_ne!(moved, existing);
+        assert_eq!(fs::read(&moved).unwrap(), b"moving image");
+        assert!(!source.exists());
         let _ = fs::remove_dir_all(dir);
     }
 

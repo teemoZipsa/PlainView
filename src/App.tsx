@@ -29,9 +29,30 @@ import {
 } from './clipboardCopy';
 import { SUPPORTED_IMAGE_EXTENSIONS } from './imageFormats';
 import {
+  clampPanOffsetToViewport,
   exceedsPanBoundary,
   hasPanOverflow,
+  resolveViewportDimensions,
 } from './windowGeometry';
+import {
+  getWheelZoomDirection,
+  getNextZoom,
+  getZoomTransition,
+  type ZoomDirection,
+} from './zoom';
+import {
+  createFittedView,
+  getNextRotation,
+  restoreViewTransform,
+  type ViewTransformState,
+} from './viewState';
+import { LatestIntent } from './asyncIntent';
+import {
+  NativeDialogGuard,
+  runWithNativeDialogGuard,
+} from './nativeDialogGuard';
+import { SerializedTaskQueue } from './serializedTaskQueue';
+import { handleDialogKeyDown } from './modalKeyboard';
 import type {
   ViewerState,
   Rotation,
@@ -46,17 +67,11 @@ import type {
 } from './types';
 import './App.css';
 
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 10;
-const ZOOM_STEP = 0.15;
 const SCREEN_FIT_RATIO = 0.92;
 const MIN_WINDOW_WIDTH = 280;
 const MIN_WINDOW_HEIGHT = 240;
-interface FullscreenSnapshot {
+interface FullscreenSnapshot extends ViewTransformState {
   currentFilePath: string | null;
-  zoom: number;
-  fitMode: FitMode;
-  panOffset: { x: number; y: number };
 }
 
 interface AppRegistrationDraft {
@@ -125,6 +140,9 @@ function App() {
   const [renameDraft, setRenameDraft] = useState<RenameDraft | null>(null);
   const [isCustomAppManagerOpen, setIsCustomAppManagerOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
+  const [isRegistrationSaving, setIsRegistrationSaving] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [isRemovingCustomApp, setIsRemovingCustomApp] = useState(false);
   const [failedLoad, setFailedLoad] = useState<FailedLoadState | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
@@ -139,7 +157,7 @@ function App() {
     [locale]
   );
 
-  const isNativeDialogOpenRef = useRef(false);
+  const nativeDialogGuardRef = useRef(new NativeDialogGuard());
   const hasBlockingModal = Boolean(
     registrationDraft ||
       renameDraft ||
@@ -149,7 +167,7 @@ function App() {
       isAboutOpen
   );
   const isInteractionBlocked = useCallback(
-    () => hasBlockingModal || isNativeDialogOpenRef.current,
+    () => hasBlockingModal || nativeDialogGuardRef.current.isActive,
     [hasBlockingModal]
   );
 
@@ -196,13 +214,19 @@ function App() {
   const isFullscreenProcessingRef = useRef(false);
   const isCopyingRef = useRef(false);
   const isPrintingRef = useRef(false);
+  const isClosingRef = useRef(false);
+  const allowNativeCloseRef = useRef(false);
   const isMovingRef = useRef(false);
   const isTrashingRef = useRef(false);
   const isSavingRef = useRef(false);
   const isRenamingRef = useRef(false);
+  const isRegistrationSavingRef = useRef(false);
+  const isRemovingCustomAppRef = useRef(false);
   const hasDraggedRef = useRef(false);
   const centerAfterNextResizeRef = useRef(true);
   const windowBoundsReadyRef = useRef(false);
+  const settingsLoadedRef = useRef(false);
+  const settingsSaveQueueRef = useRef(new SerializedTaskQueue());
   const gifPauseRef = useRef<GifPauseState | null>(null);
   const gifClickSequenceRef = useRef<{
     filePath: string;
@@ -212,8 +236,10 @@ function App() {
   const viewerStateRef = useRef(state);
   const failedLoadRef = useRef(failedLoad);
 
-  // Race condition prevention: monotonic request counter
-  const requestIdRef = useRef(0);
+  // User image intents and background refreshes use separate generations so
+  // stale async work cannot replace a newer visible image.
+  const imageIntentRef = useRef(new LatestIntent());
+  const folderRefreshIntentRef = useRef(new LatestIntent());
 
   viewerStateRef.current = state;
   failedLoadRef.current = failedLoad;
@@ -229,6 +255,12 @@ function App() {
     isImageStale,
   } = useImageLoader();
 
+  const saveSettingsInOrder = useCallback(
+    (settings: Settings) =>
+      settingsSaveQueueRef.current.run(() => saveSettings(settings)),
+    [saveSettings]
+  );
+
   const overlay = useOverlayVisibility();
 
   // ---- Utility functions ----
@@ -236,6 +268,8 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
+
+  useEffect(() => () => nativeDialogGuardRef.current.dispose(), []);
 
   const showToast = useCallback((message: string, tone: ToastTone = 'neutral', duration = 2200) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -303,15 +337,23 @@ function App() {
 
   const saveCustomOpenApps = useCallback(
     async (nextApps: CustomOpenApp[]) => {
+      const previousSettings = settingsRef.current;
       const nextSettings: Settings = {
-        ...settingsRef.current,
+        ...previousSettings,
         customOpenApps: nextApps,
       };
-      await saveSettings(nextSettings);
       settingsRef.current = nextSettings;
-      setCustomOpenApps(nextApps);
+      try {
+        await saveSettingsInOrder(nextSettings);
+        setCustomOpenApps(nextApps);
+      } catch (error) {
+        if (settingsRef.current === nextSettings) {
+          settingsRef.current = previousSettings;
+        }
+        throw error;
+      }
     },
-    [saveSettings]
+    [saveSettingsInOrder]
   );
 
   const isCurrentImageReady = useCallback(() => {
@@ -471,24 +513,7 @@ function App() {
     ) => {
       const viewport = getViewportSize();
       const rendered = getRenderedSize(naturalSize.width, naturalSize.height, zoom, rotation);
-      let x = panOffset.x;
-      let y = panOffset.y;
-
-      if (!exceedsPanBoundary(rendered.width, viewport.width)) {
-        x = 0;
-      } else {
-        const maxPanX = (rendered.width - viewport.width) / 2;
-        x = Math.max(-maxPanX, Math.min(maxPanX, x));
-      }
-
-      if (!exceedsPanBoundary(rendered.height, viewport.height)) {
-        y = 0;
-      } else {
-        const maxPanY = (rendered.height - viewport.height) / 2;
-        y = Math.max(-maxPanY, Math.min(maxPanY, y));
-      }
-
-      return { x, y };
+      return clampPanOffsetToViewport(rendered, viewport, panOffset);
     },
     [getRenderedSize, getViewportSize]
   );
@@ -496,18 +521,17 @@ function App() {
   const setZoomWithCenter = useCallback(
     (targetZoom: number) => {
       setState((prev) => {
-        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoom));
-        const ratio = prev.zoom > 0 ? newZoom / prev.zoom : 1;
-        const scaledPan = {
-          x: prev.panOffset.x * ratio,
-          y: prev.panOffset.y * ratio,
-        };
+        const transition = getZoomTransition(
+          prev.zoom,
+          targetZoom,
+          prev.panOffset,
+          (zoom, panOffset) =>
+            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset)
+        );
 
         return {
           ...prev,
-          zoom: newZoom,
-          fitMode: 'auto' as const,
-          panOffset: clampPanOffset(prev.naturalSize, newZoom, prev.rotation, scaledPan),
+          ...transition,
         };
       });
     },
@@ -515,20 +539,19 @@ function App() {
   );
 
   const scaleZoomWithCenter = useCallback(
-    (factor: number) => {
+    (direction: ZoomDirection) => {
       setState((prev) => {
-        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, prev.zoom * factor));
-        const ratio = prev.zoom > 0 ? newZoom / prev.zoom : 1;
-        const scaledPan = {
-          x: prev.panOffset.x * ratio,
-          y: prev.panOffset.y * ratio,
-        };
+        const transition = getZoomTransition(
+          prev.zoom,
+          getNextZoom(prev.zoom, direction),
+          prev.panOffset,
+          (zoom, panOffset) =>
+            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset)
+        );
 
         return {
           ...prev,
-          zoom: newZoom,
-          fitMode: 'auto' as const,
-          panOffset: clampPanOffset(prev.naturalSize, newZoom, prev.rotation, scaledPan),
+          ...transition,
         };
       });
     },
@@ -539,7 +562,7 @@ function App() {
 
   const openImage = useCallback(
     async (filePath: string, imageList?: string[], index?: number) => {
-      const myRequestId = ++requestIdRef.current;
+      const myRequestId = imageIntentRef.current.begin();
       setFailedLoad(null);
       updateGifPause(null);
       gifClickSequenceRef.current = null;
@@ -556,7 +579,7 @@ function App() {
         const result = await loadImage(filePath);
 
         // Stale request guard
-        if (requestIdRef.current !== myRequestId) return;
+        if (!imageIntentRef.current.isCurrent(myRequestId)) return;
 
         const naturalW = result.naturalWidth;
         const naturalH = result.naturalHeight;
@@ -576,25 +599,58 @@ function App() {
         const winW = Math.max(MIN_WINDOW_WIDTH, Math.round(naturalW * initialZoom));
         const winH = Math.max(MIN_WINDOW_HEIGHT, Math.round(naturalH * initialZoom));
 
+        let isFullscreen = false;
         try {
-          await invoke('resize_window', { width: winW, height: winH });
+          isFullscreen = await getCurrentWindow().isFullscreen();
+        } catch {
+          // Fall back to attempting the normal resize below.
+        }
+
+        if (!imageIntentRef.current.isCurrent(myRequestId)) return;
+
+        let didResizeWindow = false;
+        if (!isFullscreen) {
+          try {
+            await invoke('resize_window', { width: winW, height: winH });
+            didResizeWindow = true;
+          } catch {
+            // Continue with the actual viewer size instead of assuming resize success.
+          }
 
           // The initial saved placement is restored once during startup. New
           // images must not snap an already moved window back to an old point.
-          if (centerAfterNextResizeRef.current) {
+          if (didResizeWindow && centerAfterNextResizeRef.current) {
             centerAfterNextResizeRef.current = false;
-            await getCurrentWindow().center();
+            try {
+              await getCurrentWindow().center();
+            } catch {
+              // The resized window remains usable even if centering fails.
+            }
           }
-        } catch {
-          // Window operations may fail, continue
+        }
+
+        if (didResizeWindow) {
+          await waitForNextFrame();
+          await waitForNextFrame();
         }
 
         // Stale request guard after async window ops
-        if (requestIdRef.current !== myRequestId) return;
+        if (!imageIntentRef.current.isCurrent(myRequestId)) return;
 
-        // Use the TARGET window size for fit zoom calculation,
-        // not window.innerWidth which may not have updated yet
-        const fitZoom = calculateFitZoomForSize(naturalW, naturalH, 0, winW, winH);
+        const viewerRect = viewerRef.current?.getBoundingClientRect();
+        const fitViewport = resolveViewportDimensions(
+          { width: winW, height: winH },
+          viewerRect
+            ? { width: viewerRect.width, height: viewerRect.height }
+            : null
+        );
+        const fitZoom = calculateFitZoomForSize(
+          naturalW,
+          naturalH,
+          0,
+          fitViewport.width,
+          fitViewport.height
+        );
         const defaultFitMode = settingsRef.current.defaultFitMode;
         const displayZoom = defaultFitMode === 'original' ? 1 : fitZoom;
         const displayFitMode: FitMode =
@@ -602,7 +658,9 @@ function App() {
             ? 'fit'
             : defaultFitMode === 'original'
               ? 'original'
-              : 'auto';
+              : isFullscreen
+                ? 'fit'
+                : 'auto';
 
         setState((prev) => ({
           ...prev,
@@ -633,7 +691,7 @@ function App() {
         }
       } catch (err: unknown) {
         // Stale request guard on error path too
-        if (requestIdRef.current !== myRequestId) return;
+        if (!imageIntentRef.current.isCurrent(myRequestId)) return;
 
         const failedList = imageList ?? state.imageList;
         const failedIndex = index ?? state.currentIndex;
@@ -668,8 +726,10 @@ function App() {
 
   const openImageFromPath = useCallback(
     async (filePath: string) => {
+      const scanIntent = imageIntentRef.current.begin();
       try {
         const imageList = await scanFolder(filePath);
+        if (!imageIntentRef.current.isCurrent(scanIntent)) return;
         const index = imageList.findIndex(
           (path) => path.toLowerCase() === filePath.toLowerCase()
         );
@@ -679,6 +739,7 @@ function App() {
           await openImage(filePath, [filePath], 0);
         }
       } catch {
+        if (!imageIntentRef.current.isCurrent(scanIntent)) return;
         await openImage(filePath, [filePath], 0);
       }
     },
@@ -686,32 +747,30 @@ function App() {
   );
 
   const handleOpenImageDialog = useCallback(async () => {
-    if (isNativeDialogOpenRef.current) return;
-
-    isNativeDialogOpenRef.current = true;
     try {
-      const selected = await openDialog({
-        multiple: false,
-        directory: false,
-        title: t('dialog.openImageTitle'),
-        filters: [
-          {
-            name: t('dialog.imageFilter'),
-            extensions: [...SUPPORTED_IMAGE_EXTENSIONS],
-          },
-        ],
-      });
+      const dialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () =>
+          openDialog({
+            multiple: false,
+            directory: false,
+            title: t('dialog.openImageTitle'),
+            filters: [
+              {
+                name: t('dialog.imageFilter'),
+                extensions: [...SUPPORTED_IMAGE_EXTENSIONS],
+              },
+            ],
+          })
+      );
+      if (!dialog.started) return;
 
+      const selected = dialog.value;
       if (typeof selected !== 'string') return;
       await openImageFromPath(selected);
     } catch (error) {
       console.warn('Failed to open the image picker:', error);
       showToast(t('toast.openImageDialogFailed'), 'error', 3200);
-    } finally {
-      // Keep shortcuts suppressed through a queued Escape from the native dialog.
-      window.setTimeout(() => {
-        isNativeDialogOpenRef.current = false;
-      }, 250);
     }
   }, [openImageFromPath, showToast, t]);
 
@@ -739,13 +798,24 @@ function App() {
 
   const refreshCurrentFolder = useCallback(
     async (forceReload = false) => {
+      const refreshIntent = folderRefreshIntentRef.current.begin();
+      const imageIntent = imageIntentRef.current.snapshot();
       const snapshot = viewerStateRef.current;
       const failed = failedLoadRef.current;
       const currentPath = failed?.filePath ?? snapshot.currentFilePath;
       if (!currentPath) return;
 
+      const isStillCurrent = () => {
+        if (!folderRefreshIntentRef.current.isCurrent(refreshIntent)) return false;
+        if (!imageIntentRef.current.isCurrent(imageIntent)) return false;
+        const latestFailed = failedLoadRef.current;
+        const latestPath = latestFailed?.filePath ?? viewerStateRef.current.currentFilePath;
+        return latestPath?.toLowerCase() === currentPath.toLowerCase();
+      };
+
       try {
         const imageList = await scanFolder(currentPath);
+        if (!isStillCurrent()) return;
         const currentIndex = imageList.findIndex(
           (path) => path.toLowerCase() === currentPath.toLowerCase()
         );
@@ -772,6 +842,7 @@ function App() {
             Math.max(previousIndex, 0),
             imageList.length - 1
           );
+          if (!isStillCurrent()) return;
           await openImage(imageList[fallbackIndex], imageList, fallbackIndex);
           return;
         }
@@ -792,6 +863,7 @@ function App() {
         });
 
         const stale = forceReload || (await isImageStale(currentPath));
+        if (!isStillCurrent()) return;
         if (stale) {
           if (forceReload) invalidateImage(currentPath);
           await openImage(currentPath, imageList, currentIndex);
@@ -805,7 +877,7 @@ function App() {
 
   useFolderSync({
     filePath: failedLoad?.filePath ?? state.currentFilePath,
-    onRefresh: () => refreshCurrentFolder(false),
+    onRefresh: refreshCurrentFolder,
   });
 
   // ---- Tauri native drag-and-drop ----
@@ -855,11 +927,11 @@ function App() {
   // ---- Zoom ----
 
   const zoomIn = useCallback(() => {
-    scaleZoomWithCenter(1 + ZOOM_STEP);
+    scaleZoomWithCenter('in');
   }, [scaleZoomWithCenter]);
 
   const zoomOut = useCallback(() => {
-    scaleZoomWithCenter(1 - ZOOM_STEP);
+    scaleZoomWithCenter('out');
   }, [scaleZoomWithCenter]);
 
   const setOriginalSize = useCallback(() => {
@@ -891,7 +963,7 @@ function App() {
 
   const rotate = useCallback(() => {
     setState((prev) => {
-      const newRotation = ((prev.rotation + 90) % 360) as Rotation;
+      const newRotation = getNextRotation(prev.rotation);
       const fitZoom = calculateFitZoom(
         prev.naturalSize.width,
         prev.naturalSize.height,
@@ -899,9 +971,7 @@ function App() {
       );
       return {
         ...prev,
-        rotation: newRotation,
-        zoom: fitZoom,
-        panOffset: { x: 0, y: 0 },
+        ...createFittedView(newRotation, fitZoom),
       };
     });
   }, [calculateFitZoom]);
@@ -921,13 +991,14 @@ function App() {
 
       settingsRef.current = nextSettings;
 
-      void saveSettings(nextSettings).catch((error) => {
+      void saveSettingsInOrder(nextSettings).catch((error) => {
         console.warn('Failed to save always-on-top setting.', error);
       });
-    } catch {
-      // Ignore errors
+    } catch (error) {
+      console.warn('Failed to change always-on-top state.', error);
+      showToast(t('error.windowOperationFailed'), 'error');
     }
-  }, [state.isAlwaysOnTop, saveSettings]);
+  }, [saveSettingsInOrder, showToast, state.isAlwaysOnTop, t]);
 
   // ---- Background mode ----
 
@@ -941,33 +1012,39 @@ function App() {
     settingsRef.current = nextSettings;
     setBackgroundMode(nextMode);
 
-    void saveSettings(nextSettings).catch((error) => {
+    void saveSettingsInOrder(nextSettings).catch((error) => {
       console.warn('Failed to save background mode setting.', error);
     });
-  }, [backgroundMode, saveSettings]);
+  }, [backgroundMode, saveSettingsInOrder]);
 
   const saveViewerSettings = useCallback(
     async (draft: SettingsDraft) => {
+      const previousSettings = settingsRef.current;
       const nextSettings: Settings = {
-        ...settingsRef.current,
+        ...previousSettings,
         ...draft,
         lastWindowBounds: draft.rememberWindowPosition
-          ? settingsRef.current.lastWindowBounds
+          ? previousSettings.lastWindowBounds
           : null,
       };
+      settingsRef.current = nextSettings;
 
       try {
-        await saveSettings(nextSettings);
-        settingsRef.current = nextSettings;
+        await saveSettingsInOrder(nextSettings);
         setLocale(detectLocale(nextSettings.locale));
         setOverlayHideDelayMs(nextSettings.overlayHideDelayMs);
         setIsSettingsOpen(false);
         showToast(t('toast.settingsSaved'), 'success');
+        return true;
       } catch (error) {
+        if (settingsRef.current === nextSettings) {
+          settingsRef.current = previousSettings;
+        }
         showToast(getErrorMessage(error, 'error.settingsSaveFailed'), 'error');
+        return false;
       }
     },
-    [getErrorMessage, saveSettings, showToast, t]
+    [getErrorMessage, saveSettingsInOrder, showToast, t]
   );
 
   const {
@@ -990,15 +1067,73 @@ function App() {
     }
   }, [showToast, t]);
 
+  const captureCurrentWindowBounds = useCallback(async () => {
+    if (!windowBoundsReadyRef.current || !settingsRef.current.rememberWindowPosition) return;
+
+    const bounds = await invoke<WindowBounds | null>('get_restorable_window_bounds');
+    if (!bounds) return;
+    settingsRef.current = {
+      ...settingsRef.current,
+      lastWindowBounds: bounds,
+    };
+  }, []);
+
   const closeApp = useCallback(async () => {
-    try {
-      await saveSettings(settingsRef.current);
-    } catch {
-      // Ignore
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
     }
-    const appWindow = getCurrentWindow();
-    await appWindow.close();
-  }, [saveSettings]);
+
+    if (settingsLoadedRef.current) {
+      try {
+        await captureCurrentWindowBounds();
+      } catch {
+        // Preserve the last known valid bounds if the window can no longer be inspected.
+      }
+      try {
+        await saveSettingsInOrder(settingsRef.current);
+      } catch {
+        // Closing remains available even if settings cannot be persisted.
+      }
+    }
+    try {
+      allowNativeCloseRef.current = true;
+      await getCurrentWindow().close();
+    } catch {
+      allowNativeCloseRef.current = false;
+      isClosingRef.current = false;
+      showToast(t('error.windowOperationFailed'), 'error');
+    }
+  }, [captureCurrentWindowBounds, saveSettingsInOrder, showToast, t]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    void getCurrentWindow()
+      .onCloseRequested((event) => {
+        // closeApp calls close() after persistence. Let that second native
+        // request proceed instead of intercepting it again.
+        if (allowNativeCloseRef.current) return;
+        event.preventDefault();
+        void closeApp();
+      })
+      .then((dispose) => {
+        if (cancelled) dispose();
+        else unlisten = dispose;
+      })
+      .catch(() => {
+        // The custom close controls still use closeApp if this API is absent.
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [closeApp]);
 
   // ---- Context menu actions ----
 
@@ -1064,18 +1199,15 @@ function App() {
     closeContextMenu();
     if (!state.currentFilePath) return;
 
-    isNativeDialogOpenRef.current = true;
     try {
-      await invoke('show_open_with_dialog', { path: state.currentFilePath });
+      const dialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () => invoke('show_open_with_dialog', { path: state.currentFilePath })
+      );
+      if (!dialog.started) return;
     } catch (error) {
       console.warn('Failed to open the Open With dialog:', error);
       showToast(getCommandErrorToast(error, 'toast.openWithFailed'), 'error', 3200);
-    } finally {
-      // The native dialog can close on Escape before WebView receives the same
-      // key event. Keep app shortcuts suppressed through that queued event.
-      window.setTimeout(() => {
-        isNativeDialogOpenRef.current = false;
-      }, 250);
     }
   }, [
     closeContextMenu,
@@ -1086,10 +1218,14 @@ function App() {
 
   const handleShowFileProperties = useCallback(async () => {
     closeContextMenu();
-    if (!state.currentFilePath) return;
+    if (!state.currentFilePath || !isCurrentImageReady()) return;
 
     try {
-      await invoke('show_file_properties', { path: state.currentFilePath });
+      const dialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () => invoke('show_file_properties', { path: state.currentFilePath })
+      );
+      if (!dialog.started) return;
     } catch (error) {
       console.warn('Failed to open file properties:', error);
       showToast(getCommandErrorToast(error, 'toast.propertiesFailed'), 'error', 3200);
@@ -1097,24 +1233,36 @@ function App() {
   }, [
     closeContextMenu,
     getCommandErrorToast,
+    isCurrentImageReady,
     showToast,
     state.currentFilePath,
   ]);
 
   const handleMoveFile = useCallback(async () => {
     closeContextMenu();
-    if (!state.currentFilePath || isMovingRef.current) {
+    if (
+      !state.currentFilePath ||
+      state.isLoading ||
+      state.errorMessage ||
+      isMovingRef.current
+    ) {
       if (isMovingRef.current) showToast(t('toast.moveAlreadyRunning'));
       return;
     }
 
     let selected: string | string[] | null;
     try {
-      selected = await openDialog({
-        multiple: false,
-        directory: true,
-        title: t('dialog.moveFolderTitle'),
-      });
+      const dialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () =>
+          openDialog({
+            multiple: false,
+            directory: true,
+            title: t('dialog.moveFolderTitle'),
+          })
+      );
+      if (!dialog.started) return;
+      selected = dialog.value;
     } catch {
       showToast(t('toast.moveDialogFailed'));
       return;
@@ -1124,7 +1272,7 @@ function App() {
 
     const filePathAtStart = state.currentFilePath;
     isMovingRef.current = true;
-    requestIdRef.current += 1;
+    const moveRequestId = imageIntentRef.current.begin();
 
     try {
       await invoke<string>('move_file_to_folder', {
@@ -1132,12 +1280,22 @@ function App() {
         targetFolder: selected,
       });
 
+      if (
+        !imageIntentRef.current.isCurrent(moveRequestId) ||
+        viewerStateRef.current.currentFilePath?.toLowerCase() !==
+          filePathAtStart.toLowerCase()
+      ) {
+        showToast(t('toast.moveSuccess'));
+        void refreshCurrentFolder(false);
+        return;
+      }
+
       const nextList = state.imageList.filter(
         (path) => path.toLowerCase() !== filePathAtStart.toLowerCase()
       );
 
       if (nextList.length === 0) {
-        requestIdRef.current += 1;
+        imageIntentRef.current.begin();
         setState((prev) => ({
           ...prev,
           currentFilePath: null,
@@ -1173,10 +1331,13 @@ function App() {
     closeContextMenu,
     getCommandErrorToast,
     openImage,
+    refreshCurrentFolder,
     showToast,
     state.currentFilePath,
+    state.errorMessage,
     state.currentIndex,
     state.imageList,
+    state.isLoading,
     t,
   ]);
 
@@ -1195,10 +1356,16 @@ function App() {
 
     let target: string | null;
     try {
-      target = await saveDialog({
-        defaultPath: filePathAtStart,
-        filters,
-      });
+      const dialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () =>
+          saveDialog({
+            defaultPath: filePathAtStart,
+            filters,
+          })
+      );
+      if (!dialog.started) return;
+      target = dialog.value;
     } catch {
       showToast(t('toast.saveDialogFailed'));
       return;
@@ -1263,6 +1430,7 @@ function App() {
 
     const draft = renameDraft;
     isRenamingRef.current = true;
+    setIsRenaming(true);
 
     try {
       const renamedPath = await invoke<string>('rename_file', {
@@ -1281,6 +1449,10 @@ function App() {
       const pathMatches = (path: string) =>
         path.toLowerCase() === draft.filePath.toLowerCase();
       const renamedFileName = renamedPath.split(/[\\/]/).pop() || `${draft.name}${draft.extension}`;
+
+      // Discard a folder refresh that may have observed the short interval
+      // between the old name disappearing and the new state being committed.
+      folderRefreshIntentRef.current.begin();
 
       setState((prev) => {
         if (!prev.currentFilePath || !pathMatches(prev.currentFilePath)) return prev;
@@ -1323,6 +1495,7 @@ function App() {
       showToast(getCommandErrorToast(error, 'toast.renameFailed'));
     } finally {
       isRenamingRef.current = false;
+      setIsRenaming(false);
     }
   }, [
     getCommandErrorToast,
@@ -1336,7 +1509,13 @@ function App() {
 
   const handleMoveToTrash = useCallback(async () => {
     closeContextMenu();
-    if (!state.currentFilePath || isTrashingRef.current || isMovingRef.current) {
+    if (
+      !state.currentFilePath ||
+      state.isLoading ||
+      state.errorMessage ||
+      isTrashingRef.current ||
+      isMovingRef.current
+    ) {
       if (isTrashingRef.current) showToast(t('toast.trashAlreadyRunning'));
       if (isMovingRef.current) showToast(t('toast.moveAlreadyRunning'));
       return;
@@ -1347,7 +1526,7 @@ function App() {
     const filePathAtStart = state.currentFilePath;
     const fileNameAtStart =
       state.fileName || filePathAtStart.split(/[\\/]/).pop() || t('app.fileFallback');
-    const trashRequestId = ++requestIdRef.current;
+    const trashRequestId = imageIntentRef.current.begin();
 
     isTrashingRef.current = true;
     updateGifPause(null);
@@ -1365,14 +1544,14 @@ function App() {
 
     try {
       await invoke('move_file_to_trash', { filePath: filePathAtStart });
-      if (requestIdRef.current !== trashRequestId) return;
+      if (!imageIntentRef.current.isCurrent(trashRequestId)) return;
 
       const nextList = previousState.imageList.filter(
         (path) => path.toLowerCase() !== filePathAtStart.toLowerCase()
       );
 
       if (nextList.length === 0) {
-        requestIdRef.current += 1;
+        imageIntentRef.current.begin();
         setState((prev) => ({
           ...prev,
           currentFilePath: null,
@@ -1400,7 +1579,7 @@ function App() {
       showToast(t('toast.trashed', { name: fileNameAtStart }));
     } catch (error) {
       console.warn('Failed to move file to trash:', error);
-      if (requestIdRef.current === trashRequestId) {
+      if (imageIntentRef.current.isCurrent(trashRequestId)) {
         setState(previousState);
         updateGifPause(previousGifPause);
       }
@@ -1439,13 +1618,19 @@ function App() {
     closeContextMenu();
 
     try {
-      const selected = await openDialog({
-        multiple: false,
-        directory: false,
-        title: t('dialog.customAppTitle'),
-        filters: [{ name: t('dialog.executableFilter'), extensions: ['exe'] }],
-      });
+      const dialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () =>
+          openDialog({
+            multiple: false,
+            directory: false,
+            title: t('dialog.customAppTitle'),
+            filters: [{ name: t('dialog.executableFilter'), extensions: ['exe'] }],
+          })
+      );
+      if (!dialog.started) return;
 
+      const selected = dialog.value;
       if (typeof selected !== 'string') return;
 
       const defaultName = getExecutableDisplayName(selected);
@@ -1460,10 +1645,11 @@ function App() {
   }, [closeContextMenu, getExecutableDisplayName, showToast, t]);
 
   const handleSaveRegistration = useCallback(async () => {
-    if (!registrationDraft) return;
+    if (!registrationDraft || isRegistrationSavingRef.current) return;
 
-    const name = registrationDraft.name.trim() || registrationDraft.defaultName;
-    const executablePath = registrationDraft.executablePath;
+    const draft = registrationDraft;
+    const name = draft.name.trim() || draft.defaultName;
+    const executablePath = draft.executablePath;
     const existingIndex = customOpenApps.findIndex(
       (app) => app.executablePath.toLowerCase() === executablePath.toLowerCase()
     );
@@ -1481,12 +1667,18 @@ function App() {
             },
           ];
 
+    isRegistrationSavingRef.current = true;
+    setIsRegistrationSaving(true);
+
     try {
       await saveCustomOpenApps(nextApps);
       setRegistrationDraft(null);
       showToast(existingIndex >= 0 ? t('toast.customAppUpdated') : t('toast.customAppRegistered'));
     } catch {
       showToast(t('toast.customAppSaveFailed'));
+    } finally {
+      isRegistrationSavingRef.current = false;
+      setIsRegistrationSaving(false);
     }
   }, [createCustomAppId, customOpenApps, registrationDraft, saveCustomOpenApps, showToast, t]);
 
@@ -1508,9 +1700,11 @@ function App() {
   }, [closeContextMenu, customOpenApps.length, showToast, t]);
 
   const handleConfirmRemoveCustomApp = useCallback(async () => {
-    if (!removeTarget) return;
+    if (!removeTarget || isRemovingCustomAppRef.current) return;
 
     const nextApps = customOpenApps.filter((app) => app.id !== removeTarget.id);
+    isRemovingCustomAppRef.current = true;
+    setIsRemovingCustomApp(true);
 
     try {
       await saveCustomOpenApps(nextApps);
@@ -1519,6 +1713,9 @@ function App() {
       showToast(t('toast.customAppRemoved'));
     } catch {
       showToast(t('toast.customAppRemoveFailed'));
+    } finally {
+      isRemovingCustomAppRef.current = false;
+      setIsRemovingCustomApp(false);
     }
   }, [customOpenApps, removeTarget, saveCustomOpenApps, showToast, t]);
 
@@ -1559,7 +1756,11 @@ function App() {
       showToast(t('toast.printOpening'), 'progress', 4000);
       await waitForNextFrame();
       await waitForNextFrame();
-      window.print();
+      const printDialog = await runWithNativeDialogGuard(
+        nativeDialogGuardRef.current,
+        () => window.print()
+      );
+      if (!printDialog.started) return;
     } catch (error) {
       console.warn('Failed to open print dialog:', error);
       showToast(t('toast.printFailed'), 'error', 3200);
@@ -1582,8 +1783,11 @@ function App() {
     (e: React.WheelEvent) => {
       if (!state.imageSrc || state.isLoading || state.errorMessage) return;
 
+      const direction = getWheelZoomDirection(e.deltaY);
+      if (!direction) return;
+
       e.preventDefault();
-      if (e.deltaY < 0) {
+      if (direction === 'in') {
         zoomIn();
       } else {
         zoomOut();
@@ -1800,6 +2004,7 @@ function App() {
           fullscreenSnapshotRef.current = {
             currentFilePath: state.currentFilePath,
             zoom: state.zoom,
+            rotation: state.rotation,
             fitMode: state.fitMode,
             panOffset: { ...state.panOffset },
           };
@@ -1811,20 +2016,19 @@ function App() {
           const rect = viewerRef.current?.getBoundingClientRect();
           const width = rect && rect.width > 0 ? rect.width : window.innerWidth;
           const height = rect && rect.height > 0 ? rect.height : window.innerHeight;
-          const fitZoom = calculateFitZoomForSize(
-            state.naturalSize.width,
-            state.naturalSize.height,
-            state.rotation,
-            width,
-            height
-          );
-
-          setState((prev) => ({
-            ...prev,
-            zoom: fitZoom,
-            fitMode: 'fit',
-            panOffset: { x: 0, y: 0 },
-          }));
+          setState((prev) => {
+            const fitZoom = calculateFitZoomForSize(
+              prev.naturalSize.width,
+              prev.naturalSize.height,
+              prev.rotation,
+              width,
+              height
+            );
+            return {
+              ...prev,
+              ...createFittedView(prev.rotation, fitZoom),
+            };
+          });
           return;
         }
 
@@ -1833,13 +2037,14 @@ function App() {
         const snapshot = fullscreenSnapshotRef.current;
         fullscreenSnapshotRef.current = null;
 
-        if (snapshot && snapshot.currentFilePath === state.currentFilePath) {
-          setState((prev) => ({
-            ...prev,
-            zoom: snapshot.zoom,
-            fitMode: snapshot.fitMode,
-            panOffset: snapshot.panOffset,
-          }));
+        if (snapshot) {
+          setState((prev) => {
+            if (snapshot.currentFilePath !== prev.currentFilePath) return prev;
+            return {
+              ...prev,
+              ...restoreViewTransform(snapshot),
+            };
+          });
         }
       } catch {
         // Ignore fullscreen failures; the viewer remains usable.
@@ -1862,18 +2067,14 @@ function App() {
   );
 
   const saveWindowBounds = useCallback(async () => {
-    if (!windowBoundsReadyRef.current || !settingsRef.current.rememberWindowPosition) return;
-
+    if (!settingsLoadedRef.current || !settingsRef.current.rememberWindowPosition) return;
     try {
-      const bounds = await invoke<WindowBounds | null>('get_restorable_window_bounds');
-      if (!bounds) return;
-
-      settingsRef.current.lastWindowBounds = bounds;
-      await saveSettings(settingsRef.current);
+      await captureCurrentWindowBounds();
+      await saveSettingsInOrder(settingsRef.current);
     } catch {
       // Ignore
     }
-  }, [saveSettings]);
+  }, [captureCurrentWindowBounds, saveSettingsInOrder]);
 
   const scheduleSaveWindowBounds = useCallback(() => {
     if (!settingsRef.current.rememberWindowPosition) return;
@@ -1964,7 +2165,27 @@ function App() {
           );
           return { ...prev, zoom: fitZoom, panOffset: { x: 0, y: 0 } };
         }
-        return prev;
+
+        const rendered = getRenderedSize(
+          prev.naturalSize.width,
+          prev.naturalSize.height,
+          prev.zoom,
+          prev.rotation
+        );
+        const panOffset = clampPanOffsetToViewport(
+          rendered,
+          { width, height },
+          prev.panOffset
+        );
+
+        if (
+          panOffset.x === prev.panOffset.x &&
+          panOffset.y === prev.panOffset.y
+        ) {
+          return prev;
+        }
+
+        return { ...prev, panOffset };
       });
 
       closeContextMenu();
@@ -1979,7 +2200,7 @@ function App() {
         saveTimerRef.current = null;
       }
     };
-  }, [calculateFitZoomForSize, closeContextMenu, scheduleSaveWindowBounds]);
+  }, [calculateFitZoomForSize, closeContextMenu, getRenderedSize, scheduleSaveWindowBounds]);
 
   // ---- Window move handler ----
   // Native Tauri move events catch borderless window dragging, which does not
@@ -2069,6 +2290,7 @@ function App() {
         };
 
         settingsRef.current = normalizedSettings;
+        settingsLoadedRef.current = true;
         setBackgroundMode(normalizedMode);
         setLocale(detectLocale(normalizedSettings.locale));
         setOverlayHideDelayMs(normalizedSettings.overlayHideDelayMs);
@@ -2076,8 +2298,12 @@ function App() {
 
         // Apply always-on-top default
         if (normalizedSettings.alwaysOnTopDefault) {
-          await invoke('set_always_on_top', { onTop: true });
-          setState((prev) => ({ ...prev, isAlwaysOnTop: true }));
+          try {
+            await invoke('set_always_on_top', { onTop: true });
+            setState((prev) => ({ ...prev, isAlwaysOnTop: true }));
+          } catch {
+            // Window placement and image loading should still continue.
+          }
         }
 
         // Saved bounds are physical pixels. Restore them through Rust so mixed-DPI
@@ -2088,7 +2314,10 @@ function App() {
             const restored = await invoke<boolean>('restore_window_bounds', { bounds });
             centerAfterNextResizeRef.current = !restored;
             if (!restored) {
-              settingsRef.current.lastWindowBounds = null;
+              settingsRef.current = {
+                ...settingsRef.current,
+                lastWindowBounds: null,
+              };
             }
           } catch {
             centerAfterNextResizeRef.current = true;
@@ -2097,6 +2326,9 @@ function App() {
           centerAfterNextResizeRef.current = true;
         }
       } catch {
+        // Continue with the in-memory defaults and allow later window/settings
+        // writes to repair a missing or malformed settings file.
+        settingsLoadedRef.current = true;
         centerAfterNextResizeRef.current = true;
       }
 
@@ -2310,9 +2542,29 @@ function App() {
         ))}
 
       {registrationDraft && (
-        <div className="modal-backdrop" onMouseDown={() => setRegistrationDraft(null)}>
-          <div className="app-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <h2 className="app-modal-title">{t('modal.customAppTitle')}</h2>
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => {
+            if (!isRegistrationSavingRef.current) setRegistrationDraft(null);
+          }}
+        >
+          <div
+            className="app-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="custom-app-modal-title"
+            aria-busy={isRegistrationSaving}
+            tabIndex={-1}
+            onKeyDown={(event) =>
+              handleDialogKeyDown(event, event.currentTarget, () => {
+                if (!isRegistrationSavingRef.current) setRegistrationDraft(null);
+              })
+            }
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="custom-app-modal-title" className="app-modal-title">
+              {t('modal.customAppTitle')}
+            </h2>
             <p className="app-modal-path" title={registrationDraft.executablePath}>
               {registrationDraft.executablePath}
             </p>
@@ -2325,21 +2577,31 @@ function App() {
               value={registrationDraft.name}
               placeholder={registrationDraft.defaultName}
               autoFocus
+              disabled={isRegistrationSaving}
               onChange={(event) =>
                 setRegistrationDraft((prev) =>
                   prev ? { ...prev, name: event.target.value } : prev
                 )
               }
               onKeyDown={(event) => {
-                if (event.key === 'Enter') handleSaveRegistration();
-                if (event.key === 'Escape') setRegistrationDraft(null);
+                if (event.key === 'Enter') void handleSaveRegistration();
               }}
             />
             <div className="app-modal-actions">
-              <button type="button" className="app-modal-button secondary" onClick={() => setRegistrationDraft(null)}>
+              <button
+                type="button"
+                className="app-modal-button secondary"
+                disabled={isRegistrationSaving}
+                onClick={() => setRegistrationDraft(null)}
+              >
                 {t('button.cancel')}
               </button>
-              <button type="button" className="app-modal-button primary" onClick={handleSaveRegistration}>
+              <button
+                type="button"
+                className="app-modal-button primary"
+                disabled={isRegistrationSaving}
+                onClick={() => void handleSaveRegistration()}
+              >
                 {t('button.save')}
               </button>
             </div>
@@ -2348,9 +2610,29 @@ function App() {
       )}
 
       {renameDraft && (
-        <div className="modal-backdrop" onMouseDown={() => setRenameDraft(null)}>
-          <div className="app-modal compact" onMouseDown={(event) => event.stopPropagation()}>
-            <h2 className="app-modal-title">{t('modal.renameTitle')}</h2>
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => {
+            if (!isRenamingRef.current) setRenameDraft(null);
+          }}
+        >
+          <div
+            className="app-modal compact"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-modal-title"
+            aria-busy={isRenaming}
+            tabIndex={-1}
+            onKeyDown={(event) =>
+              handleDialogKeyDown(event, event.currentTarget, () => {
+                if (!isRenamingRef.current) setRenameDraft(null);
+              })
+            }
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="rename-modal-title" className="app-modal-title">
+              {t('modal.renameTitle')}
+            </h2>
             <p className="app-modal-path" title={renameDraft.filePath}>
               {renameDraft.filePath}
             </p>
@@ -2363,6 +2645,7 @@ function App() {
                 className="app-modal-input"
                 value={renameDraft.name}
                 autoFocus
+                disabled={isRenaming}
                 spellCheck={false}
                 onFocus={(event) => event.currentTarget.select()}
                 onChange={(event) =>
@@ -2372,7 +2655,6 @@ function App() {
                 }
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void handleConfirmRename();
-                  if (event.key === 'Escape') setRenameDraft(null);
                 }}
               />
               {renameDraft.extension && (
@@ -2382,10 +2664,20 @@ function App() {
               )}
             </div>
             <div className="app-modal-actions">
-              <button type="button" className="app-modal-button secondary" onClick={() => setRenameDraft(null)}>
+              <button
+                type="button"
+                className="app-modal-button secondary"
+                disabled={isRenaming}
+                onClick={() => setRenameDraft(null)}
+              >
                 {t('button.cancel')}
               </button>
-              <button type="button" className="app-modal-button primary" onClick={() => void handleConfirmRename()}>
+              <button
+                type="button"
+                className="app-modal-button primary"
+                disabled={isRenaming}
+                onClick={() => void handleConfirmRename()}
+              >
                 {t('button.rename')}
               </button>
             </div>
@@ -2393,7 +2685,7 @@ function App() {
         </div>
       )}
 
-      {isCustomAppManagerOpen && (
+      {isCustomAppManagerOpen && !removeTarget && (
         <div
           className="modal-backdrop"
           onMouseDown={() => setIsCustomAppManagerOpen(false)}
@@ -2405,9 +2697,11 @@ function App() {
             aria-labelledby="manage-apps-title"
             tabIndex={-1}
             autoFocus
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') setIsCustomAppManagerOpen(false);
-            }}
+            onKeyDown={(event) =>
+              handleDialogKeyDown(event, event.currentTarget, () =>
+                setIsCustomAppManagerOpen(false)
+              )
+            }
             onMouseDown={(event) => event.stopPropagation()}
           >
             <h2 id="manage-apps-title" className="app-modal-title">
@@ -2447,17 +2741,49 @@ function App() {
       )}
 
       {removeTarget && (
-        <div className="modal-backdrop" onMouseDown={() => setRemoveTarget(null)}>
-          <div className="app-modal compact" onMouseDown={(event) => event.stopPropagation()}>
-            <h2 className="app-modal-title">{t('modal.removeAppTitle')}</h2>
-            <p className="app-modal-text">
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => {
+            if (!isRemovingCustomAppRef.current) setRemoveTarget(null);
+          }}
+        >
+          <div
+            className="app-modal compact"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-app-modal-title"
+            aria-describedby="remove-app-modal-description"
+            aria-busy={isRemovingCustomApp}
+            tabIndex={-1}
+            onKeyDown={(event) =>
+              handleDialogKeyDown(event, event.currentTarget, () => {
+                if (!isRemovingCustomAppRef.current) setRemoveTarget(null);
+              })
+            }
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="remove-app-modal-title" className="app-modal-title">
+              {t('modal.removeAppTitle')}
+            </h2>
+            <p id="remove-app-modal-description" className="app-modal-text">
               {t('modal.removeAppMessage', { name: removeTarget.name })}
             </p>
             <div className="app-modal-actions">
-              <button type="button" className="app-modal-button secondary" onClick={() => setRemoveTarget(null)}>
+              <button
+                type="button"
+                className="app-modal-button secondary"
+                autoFocus
+                disabled={isRemovingCustomApp}
+                onClick={() => setRemoveTarget(null)}
+              >
                 {t('button.cancel')}
               </button>
-              <button type="button" className="app-modal-button danger" onClick={handleConfirmRemoveCustomApp}>
+              <button
+                type="button"
+                className="app-modal-button danger"
+                disabled={isRemovingCustomApp}
+                onClick={() => void handleConfirmRemoveCustomApp()}
+              >
                 {t('button.remove')}
               </button>
             </div>
@@ -2488,9 +2814,7 @@ function App() {
           onOpenRelease={openReleasePage}
           onOpenDefaultAppsSettings={openDefaultAppsSettings}
           onCancel={() => setIsSettingsOpen(false)}
-          onSave={(draft) => {
-            void saveViewerSettings(draft);
-          }}
+          onSave={saveViewerSettings}
         />
       )}
 
