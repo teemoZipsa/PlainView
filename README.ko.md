@@ -115,6 +115,12 @@ npm run release:windows
 - GIF 지원은 클릭으로 일시정지/재생하는 기능으로 제한됩니다. 프레임 단위 탐색은 지원하지 않습니다.
 - WebView가 직접 표시하지 못하는 형식은 PNG로 변환한 뒤 base64 데이터로 로드하며, 변환 결과는 5개 이미지 LRU 캐시를 사용합니다.
 
+## 코드 서명 정책
+
+[SignPath.io](https://signpath.io/)가 무료 코드 서명을 제공하고 [SignPath Foundation](https://signpath.org/) 인증서를 사용합니다.
+
+검증된 릴리스 절차는 [코드 서명 정책](CODE_SIGNING_POLICY.md), 실행 중 네트워크 및 데이터 처리 방식은 [개인정보 처리방침](PRIVACY.md)에서 확인할 수 있습니다. 릴리스 설명에 서명된 빌드라고 명시된 파일만 서명된 릴리스이며 이전 릴리스는 서명되지 않았을 수 있습니다.
+
 ## 라이선스
 
 MIT

@@ -1,0 +1,289 @@
+name: Sign Windows release
+run-name: Sign PlainView Windows release from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: sign-windows-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-sign:
+    name: Build and sign Windows artifacts
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CI: true
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out the signed source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.14.0
+
+      - name: Validate release configuration
+        id: version
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG }}
+          SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION_SLUG }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/master') {
+            throw 'Production signing is restricted to the master branch.'
+          }
+
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (
+            Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"$'
+          ).Matches.Groups[1].Value
+
+          if ([string]::IsNullOrWhiteSpace($packageVersion)) {
+            throw 'package.json does not contain a version.'
+          }
+          if ($packageVersion -ne $tauriVersion -or $packageVersion -ne $cargoVersion) {
+            throw "Version mismatch: package=$packageVersion, tauri=$tauriVersion, cargo=$cargoVersion"
+          }
+
+          $requiredSettings = @{
+            SIGNPATH_API_TOKEN = $env:SIGNPATH_API_TOKEN
+            SIGNPATH_ORGANIZATION_ID = $env:SIGNPATH_ORGANIZATION_ID
+            SIGNPATH_PROJECT_SLUG = $env:SIGNPATH_PROJECT_SLUG
+            SIGNPATH_SIGNING_POLICY_SLUG = $env:SIGNPATH_SIGNING_POLICY_SLUG
+            SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG = $env:SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG
+            SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION_SLUG = $env:SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION_SLUG
+          }
+          $missingSettings = @(
+            $requiredSettings.GetEnumerator() |
+              Where-Object { [string]::IsNullOrWhiteSpace([string]$_.Value) } |
+              ForEach-Object Key
+          )
+          if ($missingSettings.Count -gt 0) {
+            throw "Missing SignPath repository settings: $($missingSettings -join ', ')"
+          }
+
+          "version=$packageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+          rustup default 1.97.0
+          rustc --version
+          cargo --version
+
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Build the unsigned application executable
+        run: npx tauri build --no-bundle --ci --no-sign -- --locked
+
+      - name: Freeze the executable before signing
+        run: |
+          ./scripts/freeze-tauri-bundle-type.ps1 `
+            -ExecutablePath src-tauri/target/release/plainview.exe
+
+      - name: Prepare the application signing request
+        run: |
+          $source = 'src-tauri/target/release/plainview.exe'
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "Missing application executable: $source"
+          }
+          New-Item -ItemType Directory -Force -Path signing-input/application | Out-Null
+          Copy-Item -LiteralPath $source -Destination signing-input/application/PlainView.exe
+
+          $versionInfo = (Get-Item signing-input/application/PlainView.exe).VersionInfo
+          if ($versionInfo.ProductName -ne 'PlainView' -or
+              $versionInfo.ProductVersion -ne '${{ steps.version.outputs.version }}' -or
+              $versionInfo.FileVersion -ne '${{ steps.version.outputs.version }}') {
+            throw 'The application executable metadata does not match the release version.'
+          }
+
+      - name: Upload the application signing input
+        id: upload-application
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: signing-input/application/PlainView.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign the application executable
+        id: sign-application
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-application.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-application
+          skip-decompress: true
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+
+      - name: Install the signed executable for bundling
+        id: signed-application
+        run: |
+          $signedFiles = @(
+            Get-ChildItem signed-application -Recurse -File |
+              Where-Object { $_.Name -ieq 'PlainView.exe' }
+          )
+          if ($signedFiles.Count -ne 1) {
+            throw "Expected one signed PlainView.exe, found $($signedFiles.Count)."
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $signedFiles[0].FullName
+          if ($signature.Status -ne 'Valid') {
+            throw "The application signature is not valid: $($signature.Status)"
+          }
+
+          Copy-Item -LiteralPath $signedFiles[0].FullName `
+            -Destination src-tauri/target/release/plainview.exe -Force
+          $signedHash = (
+            Get-FileHash src-tauri/target/release/plainview.exe -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          "sha256=$signedHash" >> $env:GITHUB_OUTPUT
+
+      - name: Bundle installers around the signed executable
+        run: |
+          npx tauri bundle --bundles nsis msi --ci --no-sign
+          npm run build:portable
+
+          $bundledHash = (
+            Get-FileHash src-tauri/target/release/plainview.exe -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if ($bundledHash -ne '${{ steps.signed-application.outputs.sha256 }}') {
+            throw 'Tauri modified the signed application executable while bundling.'
+          }
+
+      - name: Prepare the final signing request
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $expectedArtifacts = @(
+            "src-tauri/target/release/bundle/nsis/PlainView_${version}_x64-setup.exe",
+            "src-tauri/target/release/bundle/msi/PlainView_${version}_x64_en-US.msi",
+            "src-tauri/target/release/bundle/PlainView_${version}_x64-portable.exe"
+          )
+
+          New-Item -ItemType Directory -Force -Path signing-input/release | Out-Null
+          foreach ($artifact in $expectedArtifacts) {
+            if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+              throw "Missing release artifact: $artifact"
+            }
+            Copy-Item -LiteralPath $artifact -Destination signing-input/release
+          }
+
+          $portable = "signing-input/release/PlainView_${version}_x64-portable.exe"
+          $signature = Get-AuthenticodeSignature -LiteralPath $portable
+          if ($signature.Status -ne 'Valid') {
+            throw "The portable executable lost its valid signature: $($signature.Status)"
+          }
+
+      - name: Upload the final signing input
+        id: upload-release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: PlainView-${{ steps.version.outputs.version }}-unsigned-release
+          path: signing-input/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Sign the Windows release artifacts
+        id: sign-release
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_RELEASE_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-release.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-release
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+
+      - name: Verify and collect signed release artifacts
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $expectedNames = @(
+            "PlainView_${version}_x64-setup.exe",
+            "PlainView_${version}_x64_en-US.msi",
+            "PlainView_${version}_x64-portable.exe"
+          )
+
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if ($null -eq $signTool) {
+            throw 'signtool.exe was not found on the GitHub-hosted runner.'
+          }
+
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          foreach ($name in $expectedNames) {
+            $matches = @(
+              Get-ChildItem signed-release -Recurse -File |
+                Where-Object { $_.Name -eq $name }
+            )
+            if ($matches.Count -ne 1) {
+              throw "Expected one signed $name, found $($matches.Count)."
+            }
+
+            & $signTool.FullName verify /pa /all /v $matches[0].FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Authenticode verification failed for $name."
+            }
+            Copy-Item -LiteralPath $matches[0].FullName -Destination release-artifacts
+          }
+
+          Get-ChildItem release-artifacts -File |
+            Sort-Object Name |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object {
+              "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))"
+            } |
+            Set-Content -Encoding ascii release-artifacts/SHA256SUMS.txt
+
+          "## Signed PlainView $version" >> $env:GITHUB_STEP_SUMMARY
+          "All EXE and MSI signatures passed Authenticode verification." >> $env:GITHUB_STEP_SUMMARY
+          "Application request: ${{ steps.sign-application.outputs.signing-request-web-url }}" >> $env:GITHUB_STEP_SUMMARY
+          "Release request: ${{ steps.sign-release.outputs.signing-request-web-url }}" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload the verified signed release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: PlainView-${{ steps.version.outputs.version }}-signed-windows
+          path: release-artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

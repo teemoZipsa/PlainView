@@ -1,7 +1,5 @@
 /* ===== PlainView – Minimal Image Viewer Styles ===== */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
-
 /* ===== Reset & Base ===== */
 
 *,
@@ -17,7 +15,7 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -295,7 +293,7 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 12px;
   font-weight: 500;
   text-align: left;
@@ -340,7 +338,7 @@ html, body, #root {
 .context-menu-shortcut {
   margin-left: 18px;
   color: var(--text-faint);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
@@ -620,7 +618,7 @@ html, body, #root {
   color: var(--text-primary);
   background-color: var(--surface-input);
   outline: none;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 13px;
 }
 
@@ -650,7 +648,7 @@ html, body, #root {
   flex: 0 0 auto;
   padding-right: 10px;
   color: var(--text-muted);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 13px;
 }
 
@@ -668,7 +666,7 @@ html, body, #root {
   border-radius: 6px;
   padding: 0 12px;
   color: var(--text-primary);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -745,7 +743,7 @@ html, body, #root {
   padding: 0 10px;
   color: var(--text-primary);
   background-color: var(--danger);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 11px;
   cursor: pointer;
 }
@@ -927,7 +925,7 @@ html, body, #root {
     color 180ms ease,
     box-shadow 180ms ease,
     transform 0.15s ease;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 13px;
   font-weight: 500;
   line-height: 1;
@@ -1182,7 +1180,7 @@ html, body, #root {
   cursor: text;
   background-color: transparent;
   border-radius: 6px;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
 }
 
 .zoom-label-button:hover,
@@ -1198,7 +1196,7 @@ html, body, #root {
   border-radius: 6px;
   color: var(--text-primary);
   background-color: var(--surface-input-active);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
 }
 
 .zoom-divider {
@@ -1225,7 +1223,7 @@ html, body, #root {
   background-color: var(--surface-info);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
@@ -1413,7 +1411,7 @@ html, body, #root {
   background-color: var(--surface-input-active);
   border: 1px solid var(--border-control);
   color: var(--text-secondary);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Segoe UI', Arial, sans-serif;
   font-size: 13px;
   font-weight: 500;
   padding: 8px 24px;

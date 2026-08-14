@@ -1,0 +1,5 @@
+# The project maintainer reviews changes to release and signing controls.
+/.github/workflows/ @teemoZipsa
+/.signpath/ @teemoZipsa
+/CODE_SIGNING_POLICY.md @teemoZipsa
+/PRIVACY.md @teemoZipsa

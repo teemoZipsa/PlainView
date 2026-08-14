@@ -115,6 +115,12 @@ npm run release:windows
 - GIF support is limited to click-to-pause and click-to-resume. Frame-by-frame navigation is not supported.
 - Formats the WebView cannot render directly are converted to PNG and loaded as base64 data, with a 5-image LRU cache for converted results.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+See the [Code signing policy](CODE_SIGNING_POLICY.md) for the verified release process and the [Privacy Policy](PRIVACY.md) for runtime network and data-handling behavior. Only release notes that explicitly identify a build as signed should be treated as signed; earlier releases may be unsigned.
+
 ## License
 
 MIT

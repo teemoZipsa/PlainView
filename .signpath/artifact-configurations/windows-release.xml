@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="PlainView_${version}_x64-portable.exe"
+             product-name="PlainView"
+             product-version="${version}"
+             file-version="${version}">
+      <authenticode-verify />
+    </pe-file>
+    <pe-file path="PlainView_${version}_x64-setup.exe"
+             product-name="PlainView"
+             product-version="${version}"
+             file-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <msi-file path="PlainView_${version}_x64_en-US.msi">
+      <pe-file path="plainview.exe"
+               product-name="PlainView"
+               product-version="${version}"
+               file-version="${version}">
+        <authenticode-verify />
+      </pe-file>
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>
