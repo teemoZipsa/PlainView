@@ -24,11 +24,15 @@ export interface ContextMenuState {
 interface ContextMenuControllerOptions {
   enabled: boolean;
   focusTargetRef: RefObject<HTMLElement | null>;
+  hasSubmenus?: boolean;
+  estimatedMenuHeight?: number;
 }
 
 export function useContextMenuController({
   enabled,
   focusTargetRef,
+  hasSubmenus = true,
+  estimatedMenuHeight,
 }: ContextMenuControllerOptions) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -60,10 +64,12 @@ export function useContextMenuController({
           pointerY: event.clientY,
           viewportWidth: window.innerWidth,
           viewportHeight: window.innerHeight,
+          hasSubmenus,
+          estimatedMenuHeight,
         })
       );
     },
-    [closeContextMenu, enabled]
+    [closeContextMenu, enabled, estimatedMenuHeight, hasSubmenus]
   );
 
   useLayoutEffect(() => {

@@ -12,6 +12,7 @@ interface InitialPlacementOptions {
   pointerY: number;
   viewportWidth: number;
   viewportHeight: number;
+  hasSubmenus?: boolean;
   menuWidth?: number;
   submenuWidth?: number;
   estimatedMenuHeight?: number;
@@ -41,6 +42,7 @@ export function getInitialContextMenuPlacement({
   pointerY,
   viewportWidth,
   viewportHeight,
+  hasSubmenus = true,
   menuWidth = CONTEXT_MENU_WIDTH,
   submenuWidth = CONTEXT_SUBMENU_WIDTH,
   estimatedMenuHeight = CONTEXT_MENU_ESTIMATED_HEIGHT,
@@ -58,13 +60,15 @@ export function getInitialContextMenuPlacement({
     anchoredX + renderedMenuWidth + submenuWidth + margin <= viewportWidth;
   const canOpenSubmenuLeft = anchoredX - submenuWidth - margin >= margin;
   const needsCompactLayout = estimatedMenuHeight > availableHeight;
-  const submenuDirection: SubmenuDirection = needsCompactLayout
-    ? 'stacked'
-    : canOpenSubmenuRight
-      ? 'right'
-      : canOpenSubmenuLeft
-        ? 'left'
-        : 'stacked';
+  const submenuDirection: SubmenuDirection = !hasSubmenus
+    ? 'right'
+    : needsCompactLayout
+      ? 'stacked'
+      : canOpenSubmenuRight
+        ? 'right'
+        : canOpenSubmenuLeft
+          ? 'left'
+          : 'stacked';
 
   return {
     x: submenuDirection === 'stacked' ? margin : anchoredX,

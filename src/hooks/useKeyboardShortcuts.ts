@@ -13,8 +13,7 @@ interface KeyboardShortcutsProps {
   onFitScreen: () => void;
   onToggleAlwaysOnTop: () => void;
   onRotate: () => void;
-  onCopyImage: () => void;
-  onCopyFile: () => void;
+  onCopy: () => void;
   onMoveFile: () => void;
   onMoveToTrash: () => void;
   onSaveAs: () => void;
@@ -50,15 +49,6 @@ function isOpenShortcut(e: KeyboardEvent): boolean {
     (e.ctrlKey || e.metaKey) &&
     !e.altKey &&
     !e.shiftKey
-  );
-}
-
-function isFileCopyShortcut(e: KeyboardEvent): boolean {
-  return (
-    e.key.toLowerCase() === 'c' &&
-    (e.ctrlKey || e.metaKey) &&
-    !e.altKey &&
-    e.shiftKey
   );
 }
 
@@ -118,15 +108,9 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         return;
       }
 
-      if (isFileCopyShortcut(e)) {
-        e.preventDefault();
-        p.onCopyFile();
-        return;
-      }
-
       if (isCopyShortcut(e)) {
         e.preventDefault();
-        p.onCopyImage();
+        p.onCopy();
         return;
       }
 

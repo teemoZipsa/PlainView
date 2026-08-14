@@ -44,6 +44,25 @@ test('opens a submenu toward the side with enough room', () => {
   );
 });
 
+test('anchors a compact menu at the pointer without reserving submenu space', () => {
+  assert.deepEqual(
+    getInitialContextMenuPlacement({
+      pointerX: 270,
+      pointerY: 230,
+      viewportWidth: 280,
+      viewportHeight: 240,
+      hasSubmenus: false,
+      estimatedMenuHeight: 85,
+    }),
+    {
+      x: 32,
+      y: 147,
+      submenuDirection: 'right',
+      submenuVerticalDirection: 'up',
+    }
+  );
+});
+
 test('anchors a width-constrained stacked menu instead of letting it jump', () => {
   assert.deepEqual(
     getInitialContextMenuPlacement({

@@ -1,13 +1,14 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.8",
+  "version": "0.7.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "test:context-menu": "node --test tests/contextMenuGeometry.test.ts",
-    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx",
+    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/EmptyContextMenu.test.tsx tests/AboutModal.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx",
+    "test:clipboard": "node --test tests/clipboardCopy.test.ts",
     "test:image-cache": "node --test tests/imageCache.test.ts",
     "test:image-formats": "node --test tests/imageFormats.test.ts",
     "test:update-check": "node --test tests/updateCheck.test.ts",

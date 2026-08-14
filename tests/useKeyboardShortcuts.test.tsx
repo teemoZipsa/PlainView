@@ -21,8 +21,7 @@ const callbacks = () => ({
   onFitScreen: vi.fn(),
   onToggleAlwaysOnTop: vi.fn(),
   onRotate: vi.fn(),
-  onCopyImage: vi.fn(),
-  onCopyFile: vi.fn(),
+  onCopy: vi.fn(),
   onMoveFile: vi.fn(),
   onMoveToTrash: vi.fn(),
   onSaveAs: vi.fn(),
@@ -74,12 +73,11 @@ function press(key: string, options: KeyboardEventInit = {}) {
 }
 
 describe('useKeyboardShortcuts', () => {
-  it('routes the new Windows-style file actions without conflicting with image copy', async () => {
+  it('routes one unified copy shortcut with the Windows-style file actions', async () => {
     const handlers = callbacks();
     await renderShortcuts(handlers);
 
     press('c', { ctrlKey: true });
-    press('c', { ctrlKey: true, shiftKey: true });
     press('o', { ctrlKey: true });
     press('p', { ctrlKey: true });
     press('F2');
@@ -88,8 +86,7 @@ describe('useKeyboardShortcuts', () => {
     press('End');
     press('Enter', { altKey: true });
 
-    expect(handlers.onCopyImage).toHaveBeenCalledTimes(1);
-    expect(handlers.onCopyFile).toHaveBeenCalledTimes(1);
+    expect(handlers.onCopy).toHaveBeenCalledTimes(1);
     expect(handlers.onOpenImage).toHaveBeenCalledTimes(1);
     expect(handlers.onPrint).toHaveBeenCalledTimes(1);
     expect(handlers.onRename).toHaveBeenCalledTimes(1);
@@ -103,11 +100,11 @@ describe('useKeyboardShortcuts', () => {
     const handlers = callbacks();
     await renderShortcuts(handlers, false);
 
-    press('c', { ctrlKey: true, shiftKey: true });
+    press('c', { ctrlKey: true });
     press('p', { ctrlKey: true });
     press('F2');
 
-    expect(handlers.onCopyFile).not.toHaveBeenCalled();
+    expect(handlers.onCopy).not.toHaveBeenCalled();
     expect(handlers.onPrint).not.toHaveBeenCalled();
     expect(handlers.onRename).not.toHaveBeenCalled();
   });

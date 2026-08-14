@@ -11,6 +11,10 @@ import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import SettingsModal from './components/SettingsModal';
 import EmptyView from './components/EmptyView';
+import AboutModal from './components/AboutModal';
+import EmptyContextMenu, {
+  EMPTY_CONTEXT_MENU_ESTIMATED_HEIGHT,
+} from './components/EmptyContextMenu';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
@@ -19,6 +23,10 @@ import { useContextMenuController } from './hooks/useContextMenuController';
 import { useSystemIntegration } from './hooks/useSystemIntegration';
 import { commandErrorKeys, detectLocale, translate, type TranslationKey } from './i18n';
 import { drawImageToCanvas } from './imageCanvas';
+import {
+  writeAdaptiveClipboard,
+  type ClipboardFormatStatus,
+} from './clipboardCopy';
 import { SUPPORTED_IMAGE_EXTENSIONS } from './imageFormats';
 import {
   exceedsPanBoundary,
@@ -75,7 +83,7 @@ interface FailedLoadState {
   index: number;
 }
 
-type ToastTone = 'neutral' | 'progress' | 'success' | 'error';
+type ToastTone = 'neutral' | 'progress' | 'success' | 'warning' | 'error';
 
 interface ToastState {
   message: string;
@@ -119,6 +127,7 @@ function App() {
   const [removeTarget, setRemoveTarget] = useState<CustomOpenApp | null>(null);
   const [failedLoad, setFailedLoad] = useState<FailedLoadState | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
   const [overlayHideDelayMs, setOverlayHideDelayMs] = useState(2000);
@@ -128,6 +137,20 @@ function App() {
     (key: TranslationKey, values?: Record<string, string | number>) =>
       translate(locale, key, values),
     [locale]
+  );
+
+  const isNativeDialogOpenRef = useRef(false);
+  const hasBlockingModal = Boolean(
+    registrationDraft ||
+      renameDraft ||
+      isCustomAppManagerOpen ||
+      removeTarget ||
+      isSettingsOpen ||
+      isAboutOpen
+  );
+  const isInteractionBlocked = useCallback(
+    () => hasBlockingModal || isNativeDialogOpenRef.current,
+    [hasBlockingModal]
   );
 
   const settingsRef = useRef<Settings>({
@@ -151,8 +174,15 @@ function App() {
     closeContextMenu,
     dismissContextMenu,
   } = useContextMenuController({
-    enabled: Boolean(state.currentFilePath) && !state.isLoading && !state.errorMessage,
+    enabled:
+      !state.isLoading &&
+      !state.errorMessage &&
+      !isInteractionBlocked(),
     focusTargetRef: viewerRef,
+    hasSubmenus: Boolean(state.currentFilePath),
+    estimatedMenuHeight: state.currentFilePath
+      ? undefined
+      : EMPTY_CONTEXT_MENU_ESTIMATED_HEIGHT,
   });
   const viewerImageRef = useRef<HTMLImageElement>(null);
   const printCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -165,8 +195,6 @@ function App() {
   const fullscreenSnapshotRef = useRef<FullscreenSnapshot | null>(null);
   const isFullscreenProcessingRef = useRef(false);
   const isCopyingRef = useRef(false);
-  const isFileCopyingRef = useRef(false);
-  const isNativeDialogOpenRef = useRef(false);
   const isPrintingRef = useRef(false);
   const isMovingRef = useRef(false);
   const isTrashingRef = useRef(false);
@@ -299,32 +327,44 @@ function App() {
     });
   }, []);
 
-  const copyImageElementToClipboard = useCallback(async (imageElement: HTMLImageElement) => {
-    const canvas = drawImageToCanvas(imageElement);
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('2D canvas context is not available.');
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const rgba = new Uint8Array(imageData.data);
-    const tauriImage = await TauriImage.new(rgba, canvas.width, canvas.height);
+  const copyImageAndFileToClipboard = useCallback(
+    async (imageElement: HTMLImageElement, filePath: string) => {
+      return writeAdaptiveClipboard({
+        writeImageFormats: async () => {
+          const canvas = drawImageToCanvas(imageElement);
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('2D canvas context is not available.');
+          const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+          const rgba = new Uint8Array(imageData.data);
+          const tauriImage = await TauriImage.new(rgba, canvas.width, canvas.height);
 
-    try {
-      await writeImage(tauriImage);
-    } finally {
-      await tauriImage.close().catch(() => {});
-    }
-  }, []);
+          try {
+            await writeImage(tauriImage);
+          } finally {
+            await tauriImage.close().catch(() => {});
+          }
+        },
+        appendFileFormat: () =>
+          invoke<ClipboardFormatStatus>('append_file_to_clipboard', {
+            path: filePath,
+          }),
+      });
+    },
+    []
+  );
 
-  const handleCopyImage = useCallback(async () => {
+  const handleCopy = useCallback(async () => {
     if (isCopyingRef.current) {
       showToast(t('toast.copyAlreadyRunning'), 'progress');
       return;
     }
-    if (!isCurrentImageReady() || !state.imageSrc) {
+    if (!isCurrentImageReady() || !state.imageSrc || !state.currentFilePath) {
       showToast(t('toast.copyUnavailable'), 'error');
       return;
     }
 
     const srcAtStart = state.imageSrc;
+    const filePathAtStart = state.currentFilePath;
     const imageElementAtStart = viewerImageRef.current;
     isCopyingRef.current = true;
     showToast(t('toast.copyInProgress'), 'progress', 10_000);
@@ -341,15 +381,42 @@ function App() {
         imageElement = await loadImageElement(srcAtStart);
       }
 
-      await copyImageElementToClipboard(imageElement);
-      showToast(t('toast.copySuccess'), 'success', 3200);
+      const result = await copyImageAndFileToClipboard(
+        imageElement,
+        filePathAtStart
+      );
+      if (result.kind === 'image-only') {
+        if (result.fileError) {
+          console.warn(
+            'Copied image formats but could not append the file format:',
+            result.fileError
+          );
+        }
+        showToast(t('toast.copyImageOnlySuccess'), 'warning', 4200);
+      } else if (result.kind === 'file-only') {
+        console.warn('Copied the file format but image formats were not preserved.');
+        showToast(t('toast.copyFileOnlySuccess'), 'warning', 4200);
+      } else if (result.kind === 'unavailable') {
+        console.warn('Clipboard format verification failed after copying.');
+        showToast(t('toast.copyFailed'), 'error', 3200);
+      } else {
+        showToast(t('toast.copySuccess'), 'success', 3200);
+      }
     } catch (error) {
-      console.warn('Failed to copy image:', error);
+      console.warn('Failed to copy image and file formats:', error);
       showToast(t('toast.copyFailed'), 'error', 3200);
     } finally {
       isCopyingRef.current = false;
     }
-  }, [copyImageElementToClipboard, isCurrentImageReady, loadImageElement, showToast, state.imageSrc, t]);
+  }, [
+    copyImageAndFileToClipboard,
+    isCurrentImageReady,
+    loadImageElement,
+    showToast,
+    state.currentFilePath,
+    state.imageSrc,
+    t,
+  ]);
 
   const getViewportSize = useCallback(() => {
     return viewportSize;
@@ -935,6 +1002,23 @@ function App() {
 
   // ---- Context menu actions ----
 
+  const handleOpenImageFromContextMenu = useCallback(() => {
+    closeContextMenu();
+    void handleOpenImageDialog();
+  }, [closeContextMenu, handleOpenImageDialog]);
+
+  const handleShowAbout = useCallback(() => {
+    closeContextMenu();
+    setIsAboutOpen(true);
+  }, [closeContextMenu]);
+
+  const handleCloseAbout = useCallback(() => {
+    setIsAboutOpen(false);
+    globalThis.setTimeout(() => {
+      viewerRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }, []);
+
   const handleRevealInExplorer = useCallback(async () => {
     closeContextMenu();
     if (!state.currentFilePath) return;
@@ -946,32 +1030,10 @@ function App() {
     }
   }, [closeContextMenu, showToast, state.currentFilePath, t]);
 
-  const handleCopyImageFromMenu = useCallback(() => {
+  const handleCopyFromMenu = useCallback(() => {
     closeContextMenu();
-    void handleCopyImage();
-  }, [closeContextMenu, handleCopyImage]);
-
-  const handleCopyFile = useCallback(async () => {
-    closeContextMenu();
-    if (!state.currentFilePath || isFileCopyingRef.current) return;
-
-    isFileCopyingRef.current = true;
-    try {
-      await invoke('copy_file_to_clipboard', { path: state.currentFilePath });
-      showToast(t('toast.fileCopySuccess'), 'success', 3200);
-    } catch (error) {
-      console.warn('Failed to copy file:', error);
-      showToast(getCommandErrorToast(error, 'toast.fileCopyFailed'), 'error', 3200);
-    } finally {
-      isFileCopyingRef.current = false;
-    }
-  }, [
-    closeContextMenu,
-    getCommandErrorToast,
-    showToast,
-    state.currentFilePath,
-    t,
-  ]);
+    void handleCopy();
+  }, [closeContextMenu, handleCopy]);
 
   const handleCopyPath = useCallback(async () => {
     closeContextMenu();
@@ -1557,6 +1619,7 @@ function App() {
       if (contextMenu) return;
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
+      if (target.closest('.modal-backdrop')) return;
       if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
         return;
       }
@@ -1839,11 +1902,8 @@ function App() {
     onFitScreen: fitToScreen,
     onToggleAlwaysOnTop: toggleAlwaysOnTop,
     onRotate: rotate,
-    onCopyImage: () => {
-      void handleCopyImage();
-    },
-    onCopyFile: () => {
-      void handleCopyFile();
+    onCopy: () => {
+      void handleCopy();
     },
     onMoveFile: () => {
       void handleMoveFile();
@@ -1866,12 +1926,7 @@ function App() {
     },
     isEnabled: () =>
       !contextMenu &&
-      !registrationDraft &&
-      !renameDraft &&
-      !isCustomAppManagerOpen &&
-      !isSettingsOpen &&
-      !removeTarget &&
-      !isNativeDialogOpenRef.current,
+      !isInteractionBlocked(),
   });
 
   // ---- Context menu dismissal ----
@@ -2215,33 +2270,44 @@ function App() {
         />
       )}
 
-      {contextMenu && (
-        <ContextMenu
-          menuRef={contextMenuRef}
-          x={contextMenu.x}
-          y={contextMenu.y}
-          submenuDirection={contextMenu.submenuDirection}
-          submenuVerticalDirection={contextMenu.submenuVerticalDirection}
-          customApps={customOpenApps}
-          t={t}
-          onCopyImage={handleCopyImageFromMenu}
-          onCopyFile={handleCopyFile}
-          onCopyPath={handleCopyPath}
-          onReveal={handleRevealInExplorer}
-          onOpenDefault={handleOpenDefaultApp}
-          onOpenWith={handleOpenWithDialog}
-          onMoveFile={handleMoveFile}
-          onSaveAs={handleSaveAs}
-          onRename={handleRequestRename}
-          onShowProperties={handleShowFileProperties}
-          onMoveToTrash={handleMoveToTrash}
-          onOpenCustom={handleOpenCustomApp}
-          onRegisterApp={handleRegisterCustomApp}
-          onManageApps={handleManageCustomApps}
-          onPrint={handlePrintFile}
-          onDismiss={dismissContextMenu}
-        />
-      )}
+      {contextMenu &&
+        (state.currentFilePath ? (
+          <ContextMenu
+            menuRef={contextMenuRef}
+            x={contextMenu.x}
+            y={contextMenu.y}
+            submenuDirection={contextMenu.submenuDirection}
+            submenuVerticalDirection={contextMenu.submenuVerticalDirection}
+            customApps={customOpenApps}
+            t={t}
+            onCopy={handleCopyFromMenu}
+            onCopyPath={handleCopyPath}
+            onReveal={handleRevealInExplorer}
+            onOpenDefault={handleOpenDefaultApp}
+            onOpenWith={handleOpenWithDialog}
+            onMoveFile={handleMoveFile}
+            onSaveAs={handleSaveAs}
+            onRename={handleRequestRename}
+            onShowProperties={handleShowFileProperties}
+            onMoveToTrash={handleMoveToTrash}
+            onOpenCustom={handleOpenCustomApp}
+            onRegisterApp={handleRegisterCustomApp}
+            onManageApps={handleManageCustomApps}
+            onPrint={handlePrintFile}
+            onShowAbout={handleShowAbout}
+            onDismiss={dismissContextMenu}
+          />
+        ) : (
+          <EmptyContextMenu
+            menuRef={contextMenuRef}
+            x={contextMenu.x}
+            y={contextMenu.y}
+            t={t}
+            onOpenImage={handleOpenImageFromContextMenu}
+            onShowAbout={handleShowAbout}
+            onDismiss={dismissContextMenu}
+          />
+        ))}
 
       {registrationDraft && (
         <div className="modal-backdrop" onMouseDown={() => setRegistrationDraft(null)}>
@@ -2399,6 +2465,14 @@ function App() {
         </div>
       )}
 
+      {isAboutOpen && (
+        <AboutModal
+          currentVersion={packageInfo.version}
+          t={t}
+          onClose={handleCloseAbout}
+        />
+      )}
+
       {isSettingsOpen && (
         <SettingsModal
           currentVersion={packageInfo.version}
@@ -2427,7 +2501,11 @@ function App() {
           aria-live={toast.tone === 'error' ? 'assertive' : 'polite'}
         >
           <span className="toast-icon" aria-hidden="true">
-            {toast.tone === 'success' ? '✓' : toast.tone === 'error' ? '!' : ''}
+            {toast.tone === 'success'
+              ? '✓'
+              : toast.tone === 'warning' || toast.tone === 'error'
+                ? '!'
+                : ''}
           </span>
           <span>{toast.message}</span>
         </div>
