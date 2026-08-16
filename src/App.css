@@ -142,6 +142,82 @@ html, body, #root {
   cursor: move;
 }
 
+/* ===== Window Resize Handles ===== */
+
+.window-resize-handle {
+  position: absolute;
+  z-index: 101;
+  pointer-events: auto;
+}
+
+.window-resize-north,
+.window-resize-south {
+  left: 28px;
+  right: 28px;
+  height: 12px;
+  cursor: ns-resize;
+}
+
+.window-resize-north {
+  top: 0;
+}
+
+.window-resize-south {
+  bottom: 0;
+}
+
+.window-resize-east,
+.window-resize-west {
+  top: 28px;
+  bottom: 28px;
+  width: 12px;
+  cursor: ew-resize;
+}
+
+.window-resize-east {
+  right: 0;
+}
+
+.window-resize-west {
+  left: 0;
+}
+
+.window-resize-north-east,
+.window-resize-north-west,
+.window-resize-south-east,
+.window-resize-south-west {
+  width: 28px;
+  height: 28px;
+}
+
+.window-resize-north-east {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 57.14% 100%, 57.14% 42.86%, 0 42.86%);
+}
+
+.window-resize-north-west {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+  clip-path: polygon(0 0, 100% 0, 100% 42.86%, 42.86% 42.86%, 42.86% 100%, 0 100%);
+}
+
+.window-resize-south-east {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+  clip-path: polygon(57.14% 0, 100% 0, 100% 100%, 0 100%, 0 57.14%, 57.14% 57.14%);
+}
+
+.window-resize-south-west {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+  clip-path: polygon(0 0, 42.86% 0, 42.86% 57.14%, 100% 57.14%, 100% 100%, 0 100%);
+}
+
 .print-surface {
   display: none;
 }

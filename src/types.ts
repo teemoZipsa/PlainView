@@ -4,6 +4,8 @@ export interface LoadedImageData {
   mimeType: string;
   fileName: string;
   filePath: string;
+  sourceFilePath: string;
+  isTemporarySource: boolean;
   fileSize: number;
   modifiedTimeMs: number;
   originalExtension: string | null;
@@ -108,4 +110,5 @@ export interface ViewerState {
   fileName: string;
   fileSize: number;
   originalExtension: string | null;
+  isTemporarySource: boolean;
 }

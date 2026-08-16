@@ -18,6 +18,7 @@ interface CachedImage {
   fileSize: number;
   modifiedTimeMs: number;
   originalExtension: string | null;
+  isTemporarySource: boolean;
 }
 
 const preloadCache = new RevisionLruCache<CachedImage>(MAX_CACHE_SIZE);
@@ -30,7 +31,7 @@ const revisionFromData = (data: LoadedImageData): ImageRevision => ({
 function buildImageSource(data: LoadedImageData): string {
   if (data.sourceKind === 'file') {
     const revision = `${data.modifiedTimeMs}-${data.fileSize}`;
-    return `${convertFileSrc(data.filePath)}?plainviewRevision=${revision}`;
+    return `${convertFileSrc(data.sourceFilePath)}?plainviewRevision=${revision}`;
   }
 
   if (!data.base64) {
@@ -60,6 +61,7 @@ export function useImageLoader() {
     filePath: string;
     fileSize: number;
     originalExtension: string | null;
+    isTemporarySource: boolean;
     naturalWidth: number;
     naturalHeight: number;
   }> => {
@@ -67,7 +69,10 @@ export function useImageLoader() {
     preloadGeneration += 1;
     const revision = await invoke<ImageRevision>('get_image_revision', { path: filePath });
     const cached = preloadCache.get(filePath, revision);
-    if (cached) {
+    // A temporary image may have entered the cache through adjacent-image
+    // preloading. Load it once more as the active image so Rust can create the
+    // session-owned copy before the source application removes the original.
+    if (cached && !cached.isTemporarySource) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve({
@@ -76,6 +81,7 @@ export function useImageLoader() {
           filePath: cached.filePath,
           fileSize: cached.fileSize,
           originalExtension: cached.originalExtension,
+          isTemporarySource: cached.isTemporarySource,
           naturalWidth: img.naturalWidth,
           naturalHeight: img.naturalHeight,
         });
@@ -85,7 +91,10 @@ export function useImageLoader() {
     }
 
     try {
-      const data = await invoke<LoadedImageData>('read_image', { path: filePath });
+      const data = await invoke<LoadedImageData>('read_image', {
+        path: filePath,
+        retainSource: true,
+      });
       const src = buildImageSource(data);
 
       preloadCache.set(filePath, revisionFromData(data), {
@@ -95,6 +104,7 @@ export function useImageLoader() {
         fileSize: data.fileSize,
         modifiedTimeMs: data.modifiedTimeMs,
         originalExtension: data.originalExtension,
+        isTemporarySource: data.isTemporarySource,
       });
 
       return new Promise((resolve, reject) => {
@@ -106,6 +116,7 @@ export function useImageLoader() {
             filePath: data.filePath,
             fileSize: data.fileSize,
             originalExtension: data.originalExtension,
+            isTemporarySource: data.isTemporarySource,
             naturalWidth: img.naturalWidth,
             naturalHeight: img.naturalHeight,
           });
@@ -130,7 +141,10 @@ export function useImageLoader() {
         if (generation !== preloadGeneration) return;
         if (preloadCache.isCurrent(p, revision)) continue;
 
-        const data = await invoke<LoadedImageData>('read_image', { path: p });
+        const data = await invoke<LoadedImageData>('read_image', {
+          path: p,
+          retainSource: false,
+        });
         if (generation !== preloadGeneration) return;
         const src = buildImageSource(data);
         preloadCache.set(p, revisionFromData(data), {
@@ -140,6 +154,7 @@ export function useImageLoader() {
           fileSize: data.fileSize,
           modifiedTimeMs: data.modifiedTimeMs,
           originalExtension: data.originalExtension,
+          isTemporarySource: data.isTemporarySource,
         });
       } catch {
         // Silently skip failed preloads

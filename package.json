@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:context-menu": "node --test tests/contextMenuGeometry.test.ts",
-    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx",
+    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/WindowResizeHandles.test.tsx tests/useFolderSync.test.tsx",
     "test:image-cache": "node --test tests/imageCache.test.ts",
     "test:image-formats": "node --test tests/imageFormats.test.ts",
     "test:update-check": "node --test tests/updateCheck.test.ts",

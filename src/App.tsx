@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { Image as TauriImage } from '@tauri-apps/api/image';
+import { join, pictureDir } from '@tauri-apps/api/path';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -11,6 +12,7 @@ import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import SettingsModal from './components/SettingsModal';
 import EmptyView from './components/EmptyView';
+import WindowResizeHandles from './components/WindowResizeHandles';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
@@ -24,6 +26,7 @@ import {
   exceedsPanBoundary,
   hasPanOverflow,
 } from './windowGeometry';
+import { getWindowResizeDirection } from './windowResize';
 import type {
   ViewerState,
   Rotation,
@@ -107,6 +110,7 @@ function App() {
     fileName: '',
     fileSize: 0,
     originalExtension: null,
+    isTemporarySource: false,
   });
   const [viewportSize, setViewportSize] = useState(() => ({
     width: window.innerWidth,
@@ -546,6 +550,7 @@ function App() {
           fileName: result.fileName,
           fileSize: result.fileSize,
           originalExtension: result.originalExtension,
+          isTemporarySource: result.isTemporarySource,
           naturalSize: { width: naturalW, height: naturalH },
           zoom: displayZoom,
           fitMode: displayFitMode,
@@ -676,6 +681,7 @@ function App() {
       const failed = failedLoadRef.current;
       const currentPath = failed?.filePath ?? snapshot.currentFilePath;
       if (!currentPath) return;
+      if (snapshot.isTemporarySource && !failed) return;
 
       try {
         const imageList = await scanFolder(currentPath);
@@ -737,7 +743,7 @@ function App() {
   );
 
   useFolderSync({
-    filePath: failedLoad?.filePath ?? state.currentFilePath,
+    filePath: state.isTemporarySource ? null : (failedLoad?.filePath ?? state.currentFilePath),
     onRefresh: () => refreshCurrentFolder(false),
   });
 
@@ -940,7 +946,10 @@ function App() {
     if (!state.currentFilePath) return;
 
     try {
-      await revealItemInDir(state.currentFilePath);
+      const availablePath = await invoke<string>('resolve_available_image_path', {
+        path: state.currentFilePath,
+      });
+      await revealItemInDir(availablePath);
     } catch {
       showToast(t('toast.revealFailed'));
     }
@@ -978,7 +987,10 @@ function App() {
     if (!state.currentFilePath) return;
 
     try {
-      await writeText(state.currentFilePath);
+      const availablePath = await invoke<string>('resolve_available_image_path', {
+        path: state.currentFilePath,
+      });
+      await writeText(availablePath);
       showToast(t('toast.pathCopySuccess'));
     } catch (error) {
       console.warn('Failed to copy file path:', error);
@@ -1092,6 +1104,7 @@ function App() {
           fileName: '',
           fileSize: 0,
           originalExtension: null,
+          isTemporarySource: false,
         }));
         showToast(t('toast.moveSuccess'));
         return;
@@ -1130,11 +1143,22 @@ function App() {
     const filePathAtStart = state.currentFilePath;
     const ext = state.originalExtension?.toLowerCase() ?? null;
     const filters = ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : undefined;
+    let defaultPath = filePathAtStart;
+
+    if (state.isTemporarySource) {
+      try {
+        const pictures = await pictureDir();
+        defaultPath = await join(pictures, state.fileName || t('app.fileFallback'));
+      } catch {
+        // Keep the original path as the dialog hint when Windows does not
+        // expose a Pictures folder. The retained source still backs the save.
+      }
+    }
 
     let target: string | null;
     try {
       target = await saveDialog({
-        defaultPath: filePathAtStart,
+        defaultPath,
         filters,
       });
     } catch {
@@ -1164,6 +1188,7 @@ function App() {
     state.currentFilePath,
     state.errorMessage,
     state.isLoading,
+    state.isTemporarySource,
     state.originalExtension,
     t,
   ]);
@@ -1327,6 +1352,7 @@ function App() {
           fileName: '',
           fileSize: 0,
           originalExtension: null,
+          isTemporarySource: false,
         }));
         showToast(t('toast.trashed', { name: fileNameAtStart }));
         return;
@@ -1532,6 +1558,49 @@ function App() {
 
   // ---- Drag / Pan ----
 
+  const startWindowResize = useCallback((event: React.MouseEvent): boolean => {
+    if (
+      fullscreenSnapshotRef.current ||
+      contextMenu ||
+      registrationDraft ||
+      renameDraft ||
+      isCustomAppManagerOpen ||
+      isSettingsOpen ||
+      removeTarget ||
+      isNativeDialogOpenRef.current
+    ) {
+      return false;
+    }
+
+    const target = event.target as HTMLElement;
+    if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
+      return false;
+    }
+
+    const direction = getWindowResizeDirection(
+      event.clientX,
+      event.clientY,
+      window.innerWidth,
+      window.innerHeight
+    );
+    if (!direction) return false;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const appWindow = getCurrentWindow();
+    void appWindow
+      .startResizeDragging(direction)
+      .catch((error) => console.warn(`Failed to start ${direction} window resize:`, error));
+    return true;
+  }, [
+    contextMenu,
+    isCustomAppManagerOpen,
+    isSettingsOpen,
+    registrationDraft,
+    removeTarget,
+    renameDraft,
+  ]);
+
   const getDragMode = useCallback(
     (altKey: boolean): DragMode => {
       if (altKey) return 'window-move';
@@ -1552,10 +1621,19 @@ function App() {
     [state.naturalSize, state.zoom, state.rotation, getViewportSize, getRenderedSize]
   );
 
+  const handleResizeMouseDownCapture = useCallback(
+    (event: React.MouseEvent) => {
+      if (contextMenu || event.button !== 0) return;
+      startWindowResize(event);
+    },
+    [contextMenu, startWindowResize]
+  );
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (contextMenu) return;
       if (e.button !== 0) return;
+      if (startWindowResize(e)) return;
       const target = e.target as HTMLElement;
       if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
         return;
@@ -1583,7 +1661,7 @@ function App() {
 
       e.preventDefault();
     },
-    [contextMenu, getDragMode, state.imageSrc, state.panOffset]
+    [contextMenu, getDragMode, startWindowResize, state.imageSrc, state.panOffset]
   );
 
   const handleMouseMove = useCallback(
@@ -1638,6 +1716,7 @@ function App() {
 
   const handleMoveMouseDown = useCallback(async (event: React.MouseEvent) => {
     if (event.button !== 0) return;
+    if (startWindowResize(event)) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -1647,7 +1726,7 @@ function App() {
     } catch (error) {
       console.warn('Failed to start window dragging:', error);
     }
-  }, []);
+  }, [startWindowResize]);
 
   const handleImageClick = useCallback(
     (event: React.MouseEvent<HTMLImageElement>) => {
@@ -2151,6 +2230,7 @@ function App() {
     <div
       className={`app-container theme-${backgroundMode}`}
       style={{ cursor: getCursorStyle() }}
+      onMouseDownCapture={handleResizeMouseDownCapture}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -2161,6 +2241,8 @@ function App() {
       onWheel={handleWheel}
       onContextMenu={handleContextMenu}
     >
+      {!fullscreenSnapshotRef.current && <WindowResizeHandles />}
+
       <div
         ref={viewerRef}
         className="image-container"

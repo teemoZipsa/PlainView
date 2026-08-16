@@ -6,14 +6,18 @@ use image::{
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::panic::{catch_unwind, UnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::sync::{
+    atomic::{AtomicU64, Ordering as AtomicOrdering},
+    Mutex,
+};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 
@@ -31,7 +35,8 @@ use windows_sys::Win32::Graphics::Dwm::{
 };
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
-    MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    GetFileAttributesW, MoveFileExW, FILE_ATTRIBUTE_TEMPORARY, INVALID_FILE_ATTRIBUTES,
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::Controls::MARGINS;
@@ -54,6 +59,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 const UNSUPPORTED_HEIC_EXTENSIONS: &[&str] = &["heic", "heif"];
 const UNSUPPORTED_RAW_EXTENSIONS: &[&str] = &["raw", "cr2", "nef", "arw"];
 const MAX_DECODED_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_RETAINED_SOURCE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_RETAINED_IMAGES: usize = 8;
 const ERROR_NO_ASSOCIATION: u32 = 1155;
 const ERROR_NOT_SAME_DEVICE: i32 = 17;
 #[cfg(windows)]
@@ -354,6 +361,8 @@ pub struct ImageData {
     pub mime_type: String,
     pub file_name: String,
     pub file_path: String,
+    pub source_file_path: String,
+    pub is_temporary_source: bool,
     pub file_size: u64,
     pub modified_time_ms: u64,
     pub original_extension: Option<String>,
@@ -383,6 +392,182 @@ struct ActiveFolderWatcher {
 #[derive(Default)]
 struct FolderWatcherState {
     active: Mutex<Option<ActiveFolderWatcher>>,
+}
+
+#[derive(Clone)]
+struct RetainedImage {
+    original_path: PathBuf,
+    retained_path: PathBuf,
+    is_temporary: bool,
+}
+
+struct RetainedImageStore {
+    root: PathBuf,
+    entries: Mutex<VecDeque<RetainedImage>>,
+    next_id: AtomicU64,
+}
+
+impl RetainedImageStore {
+    fn new() -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let root = std::env::temp_dir()
+            .join("PlainView")
+            .join(format!("session-{}-{timestamp}", std::process::id()));
+
+        Self {
+            root,
+            entries: Mutex::new(VecDeque::new()),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_in(root: PathBuf) -> Self {
+        Self {
+            root,
+            entries: Mutex::new(VecDeque::new()),
+            next_id: AtomicU64::new(1),
+        }
+    }
+
+    fn retain(&self, source: &Path, is_temporary: bool) -> Result<Option<PathBuf>, CommandError> {
+        let metadata =
+            fs::metadata(source).map_err(|error| io_error_to_command("read_failed", error))?;
+        if metadata.len() > MAX_RETAINED_SOURCE_BYTES {
+            return Ok(None);
+        }
+
+        let id = self.next_id.fetch_add(1, AtomicOrdering::Relaxed);
+        let entry_dir = self.root.join(id.to_string());
+        fs::create_dir_all(&entry_dir)
+            .map_err(|error| io_error_to_command("read_failed", error))?;
+        let file_name = source
+            .file_name()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| std::ffi::OsStr::new("image"));
+        let retained_path = entry_dir.join(file_name);
+
+        let copied = fs::copy(source, &retained_path)
+            .map_err(|error| io_error_to_command("read_failed", error))?;
+        if copied != metadata.len() {
+            let _ = fs::remove_dir_all(&entry_dir);
+            return Err(command_error(
+                "read_failed",
+                "Retained image size differs from the original.",
+            ));
+        }
+
+        let key = normalized_path_key(source);
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| command_error("unknown", "Retained image store is unavailable."))?;
+
+        if let Some(index) = entries
+            .iter()
+            .position(|entry| normalized_path_key(&entry.original_path) == key)
+        {
+            if let Some(previous) = entries.remove(index) {
+                remove_retained_entry_files(&previous);
+            }
+        }
+
+        entries.push_back(RetainedImage {
+            original_path: source.to_path_buf(),
+            retained_path: retained_path.clone(),
+            is_temporary,
+        });
+
+        while entries.len() > MAX_RETAINED_IMAGES {
+            if let Some(expired) = entries.pop_front() {
+                remove_retained_entry_files(&expired);
+            }
+        }
+
+        Ok(Some(retained_path))
+    }
+
+    fn resolve(&self, original: &Path) -> Option<RetainedImage> {
+        let key = normalized_path_key(original);
+        let entries = self.entries.lock().ok()?;
+        entries
+            .iter()
+            .rev()
+            .find(|entry| {
+                normalized_path_key(&entry.original_path) == key && entry.retained_path.is_file()
+            })
+            .cloned()
+    }
+}
+
+impl Drop for RetainedImageStore {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn remove_retained_entry_files(entry: &RetainedImage) {
+    if let Some(parent) = entry.retained_path.parent() {
+        let _ = fs::remove_dir_all(parent);
+    } else {
+        let _ = fs::remove_file(&entry.retained_path);
+    }
+}
+
+#[cfg(windows)]
+fn normalized_path_key(path: &Path) -> String {
+    path.to_string_lossy().to_lowercase()
+}
+
+#[cfg(not(windows))]
+fn normalized_path_key(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+fn path_is_within(candidate: &Path, parent: &Path) -> bool {
+    let candidate = fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
+    let parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    candidate.starts_with(parent)
+}
+
+#[cfg(windows)]
+fn has_temporary_file_attribute(path: &Path) -> bool {
+    let path_wide = to_wide_null(path.as_os_str());
+    let attributes = unsafe { GetFileAttributesW(path_wide.as_ptr()) };
+    attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_TEMPORARY != 0
+}
+
+#[cfg(not(windows))]
+fn has_temporary_file_attribute(_path: &Path) -> bool {
+    false
+}
+
+fn is_temporary_source(path: &Path) -> bool {
+    path_is_within(path, &std::env::temp_dir()) || has_temporary_file_attribute(path)
+}
+
+fn preferred_existing_path(
+    original: &Path,
+    retained_images: &RetainedImageStore,
+) -> Result<PathBuf, CommandError> {
+    let retained = retained_images.resolve(original);
+
+    if let Some(entry) = retained.as_ref() {
+        if entry.is_temporary || !original.is_file() {
+            return Ok(entry.retained_path.clone());
+        }
+    }
+
+    if original.is_file() {
+        return Ok(original.to_path_buf());
+    }
+
+    retained
+        .map(|entry| entry.retained_path)
+        .ok_or_else(|| command_error("file_not_found", "File not found."))
 }
 
 struct DecodedImage {
@@ -730,8 +915,17 @@ fn file_revision(path: &Path) -> Result<FileRevision, CommandError> {
 }
 
 #[tauri::command]
-fn get_image_revision(path: String) -> Result<FileRevision, CommandError> {
-    file_revision(Path::new(&path))
+fn get_image_revision(
+    path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<FileRevision, CommandError> {
+    let original = Path::new(&path);
+    let source = if original.is_file() {
+        original.to_path_buf()
+    } else {
+        preferred_existing_path(original, &retained_images)?
+    };
+    file_revision(&source)
 }
 
 fn encode_png(image: DynamicImage) -> Result<DecodedImage, CommandError> {
@@ -881,37 +1075,77 @@ fn decode_image(path: &Path, ext: &str) -> Result<DecodedImage, CommandError> {
 
 /// Read an image file and return render metadata.
 #[tauri::command]
-fn read_image(path: String) -> Result<ImageData, CommandError> {
-    let file_path = PathBuf::from(&path);
+fn read_image(
+    path: String,
+    retain_source: Option<bool>,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<ImageData, CommandError> {
+    read_image_with_store(
+        Path::new(&path),
+        retain_source.unwrap_or(false),
+        &retained_images,
+    )
+}
 
-    if !file_path.exists() {
-        return Err(command_error("file_not_found", "File not found."));
-    }
-
-    if !is_supported_image(&file_path) {
+fn read_image_with_store(
+    original_path: &Path,
+    retain_source: bool,
+    retained_images: &RetainedImageStore,
+) -> Result<ImageData, CommandError> {
+    if !is_supported_image(original_path) {
         return Err(command_error(
             "unsupported_format",
             "Unsupported file format.",
         ));
     }
 
-    let ext = file_path
+    let existing_retained = retained_images.resolve(original_path);
+    let is_temporary = if original_path.is_file() {
+        is_temporary_source(original_path)
+    } else {
+        existing_retained
+            .as_ref()
+            .map(|entry| entry.is_temporary)
+            .unwrap_or(false)
+    };
+
+    let retained_path = if retain_source && is_temporary && original_path.is_file() {
+        // Best effort: viewing should still proceed from the original if a
+        // third-party app prevents us from creating a session copy.
+        retained_images.retain(original_path, true).ok().flatten()
+    } else {
+        existing_retained.map(|entry| entry.retained_path)
+    };
+
+    let source_path = if is_temporary {
+        retained_path
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| original_path.to_path_buf())
+    } else {
+        preferred_existing_path(original_path, retained_images)?
+    };
+
+    if !source_path.is_file() {
+        return Err(command_error("file_not_found", "File not found."));
+    }
+
+    let ext = original_path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_else(|| "png".to_string());
 
-    let file_name = file_path
+    let file_name = original_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let original_extension = file_path
+    let original_extension = original_path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
 
-    let revision = file_revision(&file_path)?;
+    let revision = file_revision(&source_path)?;
 
     let (source_kind, base64, mime_type, width, height) = if uses_original_file_source(&ext) {
         (
@@ -922,7 +1156,7 @@ fn read_image(path: String) -> Result<ImageData, CommandError> {
             None,
         )
     } else {
-        let decoded = decode_image(&file_path, &ext)?;
+        let decoded = decode_image(&source_path, &ext)?;
         (
             "data".to_string(),
             Some(general_purpose::STANDARD.encode(&decoded.data)),
@@ -937,7 +1171,9 @@ fn read_image(path: String) -> Result<ImageData, CommandError> {
         base64,
         mime_type,
         file_name,
-        file_path: file_path.to_string_lossy().to_string(),
+        file_path: original_path.to_string_lossy().to_string(),
+        source_file_path: source_path.to_string_lossy().to_string(),
+        is_temporary_source: is_temporary,
         file_size: revision.file_size,
         modified_time_ms: revision.modified_time_ms,
         original_extension,
@@ -1493,11 +1729,21 @@ fn unique_target_path(target_folder: &Path, file_name: &std::ffi::OsStr) -> Path
 }
 
 #[tauri::command]
-fn open_with_default_app(app: AppHandle, path: String) -> Result<(), CommandError> {
-    let file = PathBuf::from(&path);
-    if !file.is_file() {
-        return Err(command_error("file_not_found", "File not found."));
-    }
+fn resolve_available_image_path(
+    path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<String, CommandError> {
+    let file = preferred_existing_path(Path::new(&path), &retained_images)?;
+    path_to_string(&file)
+}
+
+#[tauri::command]
+fn open_with_default_app(
+    app: AppHandle,
+    path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<(), CommandError> {
+    let file = preferred_existing_path(Path::new(&path), &retained_images)?;
 
     let path_string = path_to_string(&file)?;
     if app.opener().open_path(path_string, None::<&str>).is_ok() {
@@ -1529,21 +1775,22 @@ fn open_default_apps_settings() -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-fn copy_file_to_clipboard(path: String) -> Result<(), CommandError> {
-    let file = PathBuf::from(&path);
-    if !file.is_file() {
-        return Err(command_error("file_not_found", "Image file not found."));
-    }
+fn copy_file_to_clipboard(
+    path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<(), CommandError> {
+    let file = preferred_existing_path(Path::new(&path), &retained_images)?;
 
     copy_file_path_to_clipboard(&file)
 }
 
 #[tauri::command]
-fn show_open_with_dialog(window: WebviewWindow, path: String) -> Result<(), CommandError> {
-    let file = PathBuf::from(&path);
-    if !file.is_file() {
-        return Err(command_error("file_not_found", "Image file not found."));
-    }
+fn show_open_with_dialog(
+    window: WebviewWindow,
+    path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<(), CommandError> {
+    let file = preferred_existing_path(Path::new(&path), &retained_images)?;
 
     #[cfg(windows)]
     {
@@ -1564,11 +1811,12 @@ fn show_open_with_dialog(window: WebviewWindow, path: String) -> Result<(), Comm
 }
 
 #[tauri::command]
-fn show_file_properties(window: WebviewWindow, path: String) -> Result<(), CommandError> {
-    let file = PathBuf::from(&path);
-    if !file.is_file() {
-        return Err(command_error("file_not_found", "Image file not found."));
-    }
+fn show_file_properties(
+    window: WebviewWindow,
+    path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<(), CommandError> {
+    let file = preferred_existing_path(Path::new(&path), &retained_images)?;
 
     #[cfg(windows)]
     {
@@ -1589,11 +1837,12 @@ fn show_file_properties(window: WebviewWindow, path: String) -> Result<(), Comma
 }
 
 #[tauri::command]
-fn move_file_to_folder(file_path: String, target_folder: String) -> Result<String, CommandError> {
-    let source = PathBuf::from(&file_path);
-    if !source.is_file() {
-        return Err(command_error("file_not_found", "File not found."));
-    }
+fn move_file_to_folder(
+    file_path: String,
+    target_folder: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<String, CommandError> {
+    let source = preferred_existing_path(Path::new(&file_path), &retained_images)?;
 
     let target_dir = PathBuf::from(&target_folder);
     if !target_dir.is_dir() {
@@ -1649,13 +1898,24 @@ fn move_file_to_folder(file_path: String, target_folder: String) -> Result<Strin
 }
 
 #[tauri::command]
-fn save_image_as(file_path: String, target_path: String) -> Result<String, CommandError> {
-    let source = PathBuf::from(&file_path);
-    if !source.is_file() {
-        return Err(command_error("file_not_found", "File not found."));
-    }
+fn save_image_as(
+    file_path: String,
+    target_path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<String, CommandError> {
+    save_image_as_with_store(
+        Path::new(&file_path),
+        Path::new(&target_path),
+        &retained_images,
+    )
+}
 
-    let target = PathBuf::from(&target_path);
+fn save_image_as_with_store(
+    file_path: &Path,
+    target: &Path,
+    retained_images: &RetainedImageStore,
+) -> Result<String, CommandError> {
+    let source = preferred_existing_path(file_path, retained_images)?;
     let target_parent = target
         .parent()
         .ok_or_else(|| command_error("target_not_folder", "Could not find the save folder."))?;
@@ -1671,26 +1931,26 @@ fn save_image_as(file_path: String, target_path: String) -> Result<String, Comma
         fs::canonicalize(&source).map_err(|e| io_error_to_command("unknown", e))?;
     if target.exists() {
         let target_canonical =
-            fs::canonicalize(&target).map_err(|e| io_error_to_command("unknown", e))?;
+            fs::canonicalize(target).map_err(|e| io_error_to_command("unknown", e))?;
         if source_canonical == target_canonical {
-            return path_to_string(&target);
+            return path_to_string(target);
         }
     }
 
-    let copied = fs::copy(&source, &target).map_err(|e| io_error_to_command("save_failed", e))?;
+    let copied = fs::copy(&source, target).map_err(|e| io_error_to_command("save_failed", e))?;
     let source_len = fs::metadata(&source)
         .map_err(|e| io_error_to_command("save_failed", e))?
         .len();
 
     if copied != source_len {
-        let _ = fs::remove_file(&target);
+        let _ = fs::remove_file(target);
         return Err(command_error(
             "save_failed",
             "Saved file size differs from the original.",
         ));
     }
 
-    path_to_string(&target)
+    path_to_string(target)
 }
 
 fn validate_rename_stem(value: &str) -> Result<&str, CommandError> {
@@ -1737,13 +1997,21 @@ fn validate_rename_stem(value: &str) -> Result<&str, CommandError> {
 }
 
 #[tauri::command]
-fn rename_file(file_path: String, new_name: String) -> Result<String, CommandError> {
-    let source = PathBuf::from(&file_path);
-    if !source.is_file() {
-        return Err(command_error("file_not_found", "File not found."));
-    }
+fn rename_file(
+    file_path: String,
+    new_name: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<String, CommandError> {
+    rename_file_with_store(Path::new(&file_path), &new_name, &retained_images)
+}
 
-    let new_stem = validate_rename_stem(&new_name)?;
+fn rename_file_with_store(
+    file_path: &Path,
+    new_name: &str,
+    retained_images: &RetainedImageStore,
+) -> Result<String, CommandError> {
+    let source = preferred_existing_path(file_path, retained_images)?;
+    let new_stem = validate_rename_stem(new_name)?;
     let parent = source
         .parent()
         .ok_or_else(|| command_error("parent_folder_not_found", "Could not find parent folder."))?;
@@ -1789,21 +2057,22 @@ fn rename_file(file_path: String, new_name: String) -> Result<String, CommandErr
 }
 
 #[tauri::command]
-fn move_file_to_trash(file_path: String) -> Result<(), CommandError> {
-    let source = PathBuf::from(&file_path);
-    if !source.is_file() {
-        return Err(command_error("file_not_found", "File not found."));
-    }
+fn move_file_to_trash(
+    file_path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<(), CommandError> {
+    let source = preferred_existing_path(Path::new(&file_path), &retained_images)?;
 
     trash::delete(&source).map_err(trash_error_to_command)
 }
 
 #[tauri::command]
-fn open_with_custom_app(file_path: String, executable_path: String) -> Result<(), CommandError> {
-    let file = PathBuf::from(&file_path);
-    if !file.is_file() {
-        return Err(command_error("file_not_found", "Image file not found."));
-    }
+fn open_with_custom_app(
+    file_path: String,
+    executable_path: String,
+    retained_images: State<'_, RetainedImageStore>,
+) -> Result<(), CommandError> {
+    let file = preferred_existing_path(Path::new(&file_path), &retained_images)?;
 
     let executable = PathBuf::from(&executable_path);
     if !executable.is_file() {
@@ -1831,6 +2100,7 @@ fn get_cli_args() -> Vec<String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(FolderWatcherState::default())
+        .manage(RetainedImageStore::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1859,6 +2129,7 @@ pub fn run() {
             resize_window,
             get_restorable_window_bounds,
             restore_window_bounds,
+            resolve_available_image_path,
             open_with_default_app,
             open_default_apps_settings,
             copy_file_to_clipboard,
@@ -2140,12 +2411,14 @@ mod tests {
         let dir = temp_dir("native-source");
         let path = dir.join("sample.JPG");
         fs::write(&path, b"not decoded in this path").unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let data = read_image(path.to_string_lossy().to_string()).unwrap();
+        let data = read_image_with_store(&path, false, &retained_images).unwrap();
 
         assert_eq!(data.source_kind, "file");
         assert!(data.base64.is_none());
         assert_eq!(data.mime_type, "image/jpeg");
+        assert_eq!(data.source_file_path, path.to_string_lossy());
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -2155,10 +2428,39 @@ mod tests {
         let dir = temp_dir("unsupported");
         let path = dir.join("sample.heic");
         fs::write(&path, b"unsupported").unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let error = read_image(path.to_string_lossy().to_string()).unwrap_err();
+        let error = read_image_with_store(&path, false, &retained_images).unwrap_err();
 
         assert_eq!(error.kind, "unsupported_heic");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn retained_temporary_image_survives_source_removal_for_render_and_save() {
+        let dir = temp_dir("retained-source");
+        let source = dir.join("incoming.png");
+        let target = dir.join("saved.png");
+        let bytes = b"temporary image bytes";
+        fs::write(&source, bytes).unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
+
+        let initial = read_image_with_store(&source, true, &retained_images).unwrap();
+        let retained_path = PathBuf::from(&initial.source_file_path);
+
+        assert!(initial.is_temporary_source);
+        assert_ne!(retained_path, source);
+        assert_eq!(fs::read(&retained_path).unwrap(), bytes);
+
+        fs::remove_file(&source).unwrap();
+
+        let reloaded = read_image_with_store(&source, false, &retained_images).unwrap();
+        assert_eq!(PathBuf::from(reloaded.source_file_path), retained_path);
+
+        let saved_path = save_image_as_with_store(&source, &target, &retained_images).unwrap();
+        assert_eq!(saved_path, target.to_string_lossy());
+        assert_eq!(fs::read(&target).unwrap(), bytes);
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -2169,9 +2471,9 @@ mod tests {
         let path = dir.join("sample.png");
         let bytes = b"original bytes";
         fs::write(&path, bytes).unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let path_string = path.to_string_lossy().to_string();
-        let saved_path = save_image_as(path_string.clone(), path_string).unwrap();
+        let saved_path = save_image_as_with_store(&path, &path, &retained_images).unwrap();
 
         assert_eq!(saved_path, path.to_string_lossy());
         assert_eq!(fs::read(&path).unwrap(), bytes);
@@ -2186,12 +2488,9 @@ mod tests {
         let target = dir.join("target.png");
         let bytes = b"source bytes";
         fs::write(&source, bytes).unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let saved_path = save_image_as(
-            source.to_string_lossy().to_string(),
-            target.to_string_lossy().to_string(),
-        )
-        .unwrap();
+        let saved_path = save_image_as_with_store(&source, &target, &retained_images).unwrap();
 
         assert_eq!(saved_path, target.to_string_lossy());
         assert_eq!(fs::read(&target).unwrap(), bytes);
@@ -2205,9 +2504,9 @@ mod tests {
         let source = dir.join("source.PNG");
         let bytes = b"source bytes";
         fs::write(&source, bytes).unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let renamed_path =
-            rename_file(source.to_string_lossy().to_string(), "renamed".into()).unwrap();
+        let renamed_path = rename_file_with_store(&source, "renamed", &retained_images).unwrap();
         let target = dir.join("renamed.PNG");
 
         assert_eq!(renamed_path, target.to_string_lossy());
@@ -2224,9 +2523,9 @@ mod tests {
         let target = dir.join("existing.png");
         fs::write(&source, b"source").unwrap();
         fs::write(&target, b"existing").unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let error =
-            rename_file(source.to_string_lossy().to_string(), "existing".into()).unwrap_err();
+        let error = rename_file_with_store(&source, "existing", &retained_images).unwrap_err();
 
         assert_eq!(error.kind, "file_already_exists");
         assert_eq!(fs::read(&source).unwrap(), b"source");
@@ -2241,9 +2540,9 @@ mod tests {
         let dir = temp_dir("rename-case");
         let source = dir.join("sample.png");
         fs::write(&source, b"source").unwrap();
+        let retained_images = RetainedImageStore::new_in(dir.join("retained"));
 
-        let renamed_path =
-            rename_file(source.to_string_lossy().to_string(), "Sample".into()).unwrap();
+        let renamed_path = rename_file_with_store(&source, "Sample", &retained_images).unwrap();
         let target = dir.join("Sample.png");
 
         assert_eq!(renamed_path, target.to_string_lossy());
