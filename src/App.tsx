@@ -37,7 +37,9 @@ import {
 import {
   getWheelZoomDirection,
   getNextZoom,
+  getRelativeZoom,
   getZoomTransition,
+  normalizeReferenceZoom,
   type ZoomDirection,
 } from './zoom';
 import {
@@ -119,6 +121,7 @@ function App() {
     imageList: [],
     currentIndex: -1,
     zoom: 1,
+    referenceZoom: 1,
     rotation: 0,
     fitMode: 'auto',
     panOffset: { x: 0, y: 0 },
@@ -215,7 +218,6 @@ function App() {
   const isCopyingRef = useRef(false);
   const isPrintingRef = useRef(false);
   const isClosingRef = useRef(false);
-  const allowNativeCloseRef = useRef(false);
   const isMovingRef = useRef(false);
   const isTrashingRef = useRef(false);
   const isSavingRef = useRef(false);
@@ -519,18 +521,21 @@ function App() {
   );
 
   const setZoomWithCenter = useCallback(
-    (targetZoom: number) => {
+    (targetZoomRatio: number) => {
       setState((prev) => {
+        const referenceZoom = normalizeReferenceZoom(prev.referenceZoom);
         const transition = getZoomTransition(
           prev.zoom,
-          targetZoom,
+          referenceZoom * targetZoomRatio,
           prev.panOffset,
           (zoom, panOffset) =>
-            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset)
+            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset),
+          referenceZoom
         );
 
         return {
           ...prev,
+          referenceZoom,
           ...transition,
         };
       });
@@ -541,16 +546,19 @@ function App() {
   const scaleZoomWithCenter = useCallback(
     (direction: ZoomDirection) => {
       setState((prev) => {
+        const referenceZoom = normalizeReferenceZoom(prev.referenceZoom);
         const transition = getZoomTransition(
           prev.zoom,
-          getNextZoom(prev.zoom, direction),
+          getNextZoom(prev.zoom, direction, referenceZoom),
           prev.panOffset,
           (zoom, panOffset) =>
-            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset)
+            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset),
+          referenceZoom
         );
 
         return {
           ...prev,
+          referenceZoom,
           ...transition,
         };
       });
@@ -652,7 +660,9 @@ function App() {
           fitViewport.height
         );
         const defaultFitMode = settingsRef.current.defaultFitMode;
-        const displayZoom = defaultFitMode === 'original' ? 1 : fitZoom;
+        const displayZoom = normalizeReferenceZoom(
+          defaultFitMode === 'original' ? 1 : fitZoom
+        );
         const displayFitMode: FitMode =
           defaultFitMode === 'fit'
             ? 'fit'
@@ -673,6 +683,7 @@ function App() {
           originalExtension: result.originalExtension,
           naturalSize: { width: naturalW, height: naturalH },
           zoom: displayZoom,
+          referenceZoom: displayZoom,
           fitMode: displayFitMode,
           panOffset: { x: 0, y: 0 },
           rotation: 0,
@@ -935,12 +946,16 @@ function App() {
   }, [scaleZoomWithCenter]);
 
   const setOriginalSize = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      zoom: 1,
-      fitMode: 'original' as const,
-      panOffset: { x: 0, y: 0 },
-    }));
+    setState((prev) => {
+      const referenceZoom = normalizeReferenceZoom(prev.referenceZoom);
+      return {
+        ...prev,
+        zoom: referenceZoom,
+        referenceZoom,
+        fitMode: 'original' as const,
+        panOffset: { x: 0, y: 0 },
+      };
+    });
   }, []);
 
   const fitToScreen = useCallback(() => {
@@ -950,9 +965,11 @@ function App() {
         prev.naturalSize.height,
         prev.rotation
       );
+      const referenceZoom = normalizeReferenceZoom(fitZoom);
       return {
         ...prev,
-        zoom: fitZoom,
+        zoom: referenceZoom,
+        referenceZoom,
         fitMode: 'fit' as const,
         panOffset: { x: 0, y: 0 },
       };
@@ -1100,10 +1117,8 @@ function App() {
       }
     }
     try {
-      allowNativeCloseRef.current = true;
-      await getCurrentWindow().close();
+      await invoke('destroy_window');
     } catch {
-      allowNativeCloseRef.current = false;
       isClosingRef.current = false;
       showToast(t('error.windowOperationFailed'), 'error');
     }
@@ -1115,9 +1130,6 @@ function App() {
 
     void getCurrentWindow()
       .onCloseRequested((event) => {
-        // closeApp calls close() after persistence. Let that second native
-        // request proceed instead of intercepting it again.
-        if (allowNativeCloseRef.current) return;
         event.preventDefault();
         void closeApp();
       })
@@ -1302,6 +1314,7 @@ function App() {
           imageList: [],
           currentIndex: -1,
           zoom: 1,
+          referenceZoom: 1,
           rotation: 0,
           fitMode: 'auto',
           panOffset: { x: 0, y: 0 },
@@ -1558,6 +1571,7 @@ function App() {
           imageList: [],
           currentIndex: -1,
           zoom: 1,
+          referenceZoom: 1,
           rotation: 0,
           fitMode: 'auto',
           panOffset: { x: 0, y: 0 },
@@ -2004,6 +2018,7 @@ function App() {
           fullscreenSnapshotRef.current = {
             currentFilePath: state.currentFilePath,
             zoom: state.zoom,
+            referenceZoom: state.referenceZoom,
             rotation: state.rotation,
             fitMode: state.fitMode,
             panOffset: { ...state.panOffset },
@@ -2060,6 +2075,7 @@ function App() {
       state.naturalSize.height,
       state.naturalSize.width,
       state.panOffset,
+      state.referenceZoom,
       state.rotation,
       state.zoom,
       updateGifPause,
@@ -2163,7 +2179,13 @@ function App() {
             width,
             height
           );
-          return { ...prev, zoom: fitZoom, panOffset: { x: 0, y: 0 } };
+          const referenceZoom = normalizeReferenceZoom(fitZoom);
+          return {
+            ...prev,
+            zoom: referenceZoom,
+            referenceZoom,
+            panOffset: { x: 0, y: 0 },
+          };
         }
 
         const rendered = getRenderedSize(
@@ -2476,7 +2498,7 @@ function App() {
           backgroundMode={backgroundMode}
           currentIndex={state.currentIndex}
           totalImages={state.imageList.length}
-          zoom={state.zoom}
+          zoom={getRelativeZoom(state.zoom, state.referenceZoom)}
           fileName={state.fileName}
           imageInfo={{
             filePath: state.currentFilePath,

@@ -5,6 +5,7 @@ import {
   MIN_ZOOM,
   formatZoomPercent,
   getNextZoom,
+  getRelativeZoom,
   getWheelZoomDirection,
   getZoomTransition,
 } from '../src/zoom.ts';
@@ -25,6 +26,15 @@ test('one zoom-out and one zoom-in return exactly to 100%', () => {
 test('zooming across 100% stops at 100% in either direction', () => {
   assert.equal(getNextZoom(0.95, 'in'), 1);
   assert.equal(getNextZoom(1.05, 'out'), 1);
+});
+
+test('a fitted image uses its opening scale as the stable 100% reference', () => {
+  const referenceZoom = 0.5;
+
+  assert.equal(getRelativeZoom(referenceZoom, referenceZoom), 1);
+  assert.equal(getNextZoom(referenceZoom, 'in', referenceZoom), 0.575);
+  assert.equal(getNextZoom(0.575, 'out', referenceZoom), referenceZoom);
+  assert.equal(getNextZoom(0.48, 'in', referenceZoom), referenceZoom);
 });
 
 test('zoom targets remain inside the supported range', () => {
@@ -73,6 +83,22 @@ test('setting 100% matches 1:1 and clears the previous pan', () => {
     panOffset: { x: 0, y: 0 },
   });
   assert.equal(clampCalled, false);
+});
+
+test('resetting to a fitted 100% reference recenters without changing that reference', () => {
+  const transition = getZoomTransition(
+    1,
+    0.5,
+    { x: 180, y: -90 },
+    () => ({ x: 999, y: 999 }),
+    0.5
+  );
+
+  assert.deepEqual(transition, {
+    zoom: 0.5,
+    fitMode: 'original',
+    panOffset: { x: 0, y: 0 },
+  });
 });
 
 test('non-100% zoom keeps a scaled, clamped pan offset', () => {

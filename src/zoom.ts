@@ -26,8 +26,18 @@ export type ZoomDirection = 'in' | 'out';
 export const clampZoom = (zoom: number) =>
   Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
 
-export const isOriginalZoom = (zoom: number) =>
-  Math.abs(zoom - ORIGINAL_ZOOM) <= ORIGINAL_ZOOM_EPSILON;
+export const normalizeReferenceZoom = (zoom: number) =>
+  Number.isFinite(zoom) && zoom > 0 ? clampZoom(zoom) : ORIGINAL_ZOOM;
+
+export const isOriginalZoom = (zoom: number, referenceZoom = ORIGINAL_ZOOM) => {
+  const reference = normalizeReferenceZoom(referenceZoom);
+  return Math.abs(zoom - reference) <= Math.max(1, reference) * ORIGINAL_ZOOM_EPSILON;
+};
+
+export const getRelativeZoom = (zoom: number, referenceZoom: number) => {
+  const normalizedZoom = Number.isFinite(zoom) ? zoom : ORIGINAL_ZOOM;
+  return normalizedZoom / normalizeReferenceZoom(referenceZoom);
+};
 
 export const getWheelZoomDirection = (deltaY: number): ZoomDirection | null => {
   if (deltaY < 0) return 'in';
@@ -49,39 +59,46 @@ export const formatZoomPercent = (zoom: number) => {
 };
 
 /**
- * Move through 100% as a stable zoom stop. Using reciprocal factors keeps a
- * zoom-in followed by a zoom-out reversible instead of drifting to 98%.
+ * Move through the view's 100% reference as a stable zoom stop. Using
+ * reciprocal factors keeps zoom-in followed by zoom-out reversible.
  */
-export const getNextZoom = (currentZoom: number, direction: ZoomDirection) => {
-  const normalizedCurrent = isOriginalZoom(currentZoom) ? ORIGINAL_ZOOM : currentZoom;
+export const getNextZoom = (
+  currentZoom: number,
+  direction: ZoomDirection,
+  referenceZoom = ORIGINAL_ZOOM
+) => {
+  const reference = normalizeReferenceZoom(referenceZoom);
+  const normalizedCurrent = isOriginalZoom(currentZoom, reference) ? reference : currentZoom;
   const candidate =
     direction === 'in'
       ? normalizedCurrent * ZOOM_FACTOR
       : normalizedCurrent / ZOOM_FACTOR;
 
   const crossesOriginal =
-    (normalizedCurrent < ORIGINAL_ZOOM && candidate > ORIGINAL_ZOOM) ||
-    (normalizedCurrent > ORIGINAL_ZOOM && candidate < ORIGINAL_ZOOM);
+    (normalizedCurrent < reference && candidate > reference) ||
+    (normalizedCurrent > reference && candidate < reference);
 
-  return clampZoom(crossesOriginal ? ORIGINAL_ZOOM : candidate);
+  return clampZoom(crossesOriginal ? reference : candidate);
 };
 
 /**
  * Resolve a zoom change while keeping the image center stable. Returning to
- * 100% is a reset operation: it matches the 1:1 control and recenters the
- * image, rather than retaining a stale pan from an enlarged view.
+ * The view's 100% reference is a reset operation: it matches the 1:1 control
+ * and recenters the image rather than retaining a stale enlarged-view pan.
  */
 export const getZoomTransition = (
   currentZoom: number,
   targetZoom: number,
   currentPanOffset: PanOffset,
-  clampPanOffset: (zoom: number, panOffset: PanOffset) => PanOffset
+  clampPanOffset: (zoom: number, panOffset: PanOffset) => PanOffset,
+  referenceZoom = ORIGINAL_ZOOM
 ): ZoomTransition => {
   const clampedZoom = clampZoom(targetZoom);
+  const reference = normalizeReferenceZoom(referenceZoom);
 
-  if (isOriginalZoom(clampedZoom)) {
+  if (isOriginalZoom(clampedZoom, reference)) {
     return {
-      zoom: ORIGINAL_ZOOM,
+      zoom: reference,
       fitMode: 'original',
       panOffset: { x: 0, y: 0 },
     };

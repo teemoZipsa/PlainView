@@ -17,6 +17,7 @@ test('rotating into a fitted view records the matching fit mode', () => {
   assert.deepEqual(createFittedView(90, 0.625), {
     rotation: 90,
     zoom: 0.625,
+    referenceZoom: 0.625,
     fitMode: 'fit',
     panOffset: { x: 0, y: 0 },
   });
@@ -26,6 +27,7 @@ test('fullscreen restoration includes rotation and copies the pan offset', () =>
   const snapshot = {
     rotation: 270 as const,
     zoom: 1.5,
+    referenceZoom: 0.75,
     fitMode: 'auto' as const,
     panOffset: { x: 120, y: -45 },
   };
