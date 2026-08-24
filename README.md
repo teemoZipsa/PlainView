@@ -28,7 +28,8 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 
 | Key | Action |
 |---|---|
-| `Esc` | Close |
+| `Esc` | Exit fullscreen / close in windowed mode |
+| `F11` | Toggle fullscreen |
 | `Ctrl+O` | Open an image |
 | `Left Arrow` / `Backspace` | Previous image |
 | `Right Arrow` / `Space` | Next image |
@@ -57,10 +58,12 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Natural folder navigation** - lists same-folder images in human-friendly `1, 2, 10` order for previous/next navigation
 - **Live external changes** - watches the current folder for added, deleted, or replaced files, with focus refresh and `F5` as fallbacks
 - **Large-folder responsiveness** - scans and sorts folders in the background and stops obsolete image preloads
-- **Zoom controls** - zoom with the mouse wheel, keyboard, or buttons
-- **Image panning** - drag to pan while zoomed in
-- **Fullscreen** - double-click to fit the image to fullscreen, then double-click again to restore the previous scale
-- **Window dragging** - drag the image area in default mode, or use the top handle / Alt-drag while zoomed
+- **Zoom controls** - report fitted scales directly and reserve 100% for the image's intrinsic display size; zoom toward the pointer with a mouse wheel or trackpad, or use the keyboard and buttons
+- **Image panning** - drag oversized images with pointer capture so panning continues beyond the window edge
+- **Reliable borderless resizing** - resize from every edge or corner, including diagonal resizing
+- **Stable window size** - keep the user-selected window size while navigating between images after the first image opens
+- **Fullscreen** - double-click or press `F11` to fit the image, then repeat the action or press `Esc` to restore the previous scale
+- **Window dragging** - use the top move strip or Alt-drag, kept separate from image panning
 - **Context menu** - copy the image and file formats together or copy its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, print with PlainView's built-in print dialog, or view app version and license details; the empty start screen also offers image open and app info actions; supports arrow-key, Tab, and Escape navigation
 - **Adaptive copy** - one `Ctrl+C` or context-menu action supplies both image pixels and the file object so each paste target can automatically choose the compatible format
 - **File path copy** - copy the current image's full path from the context menu

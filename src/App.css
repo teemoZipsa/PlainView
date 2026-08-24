@@ -117,15 +117,89 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  touch-action: none;
 }
 
 .viewer-image {
   max-width: none;
   max-height: none;
   display: block;
-  transition: transform 0.08s ease-out;
   image-rendering: auto;
   will-change: transform;
+}
+
+/* ===== Native-feeling borderless resize zones ===== */
+
+.window-resize-handle {
+  position: absolute;
+  z-index: 200;
+}
+
+.resize-north,
+.resize-south {
+  left: 18px;
+  right: 18px;
+  height: 10px;
+}
+
+.resize-east,
+.resize-west {
+  top: 18px;
+  bottom: 18px;
+  width: 10px;
+}
+
+.resize-north {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.resize-east {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.resize-south {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.resize-west {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.resize-north-east,
+.resize-south-east,
+.resize-south-west,
+.resize-north-west {
+  width: 18px;
+  height: 18px;
+  z-index: 201;
+}
+
+.resize-north-east {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.resize-south-east {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.resize-south-west {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.resize-north-west {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
 }
 
 /* ===== Window Move Zone ===== */
@@ -135,9 +209,27 @@ html, body, #root {
   top: 0;
   left: 0;
   width: 100%;
-  height: 56px;
+  height: 34px;
   z-index: 20;
   cursor: move;
+}
+
+.window-move-zone::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 38px;
+  height: 3px;
+  border-radius: 999px;
+  background: transparent;
+  transform: translateX(-50%);
+  transition: background-color 120ms ease;
+  pointer-events: none;
+}
+
+.window-move-zone:hover::after {
+  background: var(--text-faint);
 }
 
 .print-surface {

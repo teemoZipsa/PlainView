@@ -98,8 +98,6 @@ export interface ViewerState {
   currentIndex: number;
   /** Absolute image scale applied to the decoded bitmap. */
   zoom: number;
-  /** Absolute scale represented as 100% / 1:1 for the current view. */
-  referenceZoom: number;
   rotation: Rotation;
   fitMode: FitMode;
   panOffset: { x: number; y: number };

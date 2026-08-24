@@ -1,5 +1,3 @@
-import type { FitMode } from './types';
-
 // Raster images can require a fitted scale well below 10% (for example long
 // scrolling captures). Keep the interactive floor below realistic decoder
 // limits so zoom-out never turns into an unexpected zoom-in.
@@ -15,9 +13,14 @@ export interface PanOffset {
   y: number;
 }
 
+export interface ZoomAnchor {
+  x: number;
+  y: number;
+}
+
 export interface ZoomTransition {
   zoom: number;
-  fitMode: Extract<FitMode, 'auto' | 'original'>;
+  fitMode: 'auto';
   panOffset: PanOffset;
 }
 
@@ -26,23 +29,43 @@ export type ZoomDirection = 'in' | 'out';
 export const clampZoom = (zoom: number) =>
   Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
 
-export const normalizeReferenceZoom = (zoom: number) =>
-  Number.isFinite(zoom) && zoom > 0 ? clampZoom(zoom) : ORIGINAL_ZOOM;
-
-export const isOriginalZoom = (zoom: number, referenceZoom = ORIGINAL_ZOOM) => {
-  const reference = normalizeReferenceZoom(referenceZoom);
-  return Math.abs(zoom - reference) <= Math.max(1, reference) * ORIGINAL_ZOOM_EPSILON;
-};
-
-export const getRelativeZoom = (zoom: number, referenceZoom: number) => {
-  const normalizedZoom = Number.isFinite(zoom) ? zoom : ORIGINAL_ZOOM;
-  return normalizedZoom / normalizeReferenceZoom(referenceZoom);
-};
+export const isOriginalZoom = (zoom: number) =>
+  Math.abs(zoom - ORIGINAL_ZOOM) <= ORIGINAL_ZOOM_EPSILON;
 
 export const getWheelZoomDirection = (deltaY: number): ZoomDirection | null => {
   if (deltaY < 0) return 'in';
   if (deltaY > 0) return 'out';
   return null;
+};
+
+/**
+ * Convert wheel/trackpad movement into a continuous zoom target. A typical
+ * mouse-wheel notch still moves by one ZOOM_FACTOR, while small pixel deltas
+ * from a trackpad produce proportionally smaller changes.
+ */
+export const getWheelZoomTarget = (
+  currentZoom: number,
+  deltaY: number,
+  deltaMode = 0
+) => {
+  if (!Number.isFinite(deltaY) || deltaY === 0) return clampZoom(currentZoom);
+
+  const normalizedCurrent = Number.isFinite(currentZoom)
+    ? clampZoom(currentZoom)
+    : ORIGINAL_ZOOM;
+  const pixelDelta =
+    deltaMode === 1
+      ? deltaY * (100 / 3)
+      : deltaMode === 2
+        ? deltaY * 100
+        : deltaY;
+  const steps = Math.max(-4, Math.min(4, pixelDelta / 100));
+  const candidate = normalizedCurrent * Math.pow(ZOOM_FACTOR, -steps);
+  const crossesOriginal =
+    (normalizedCurrent < ORIGINAL_ZOOM && candidate > ORIGINAL_ZOOM) ||
+    (normalizedCurrent > ORIGINAL_ZOOM && candidate < ORIGINAL_ZOOM);
+
+  return clampZoom(crossesOriginal ? ORIGINAL_ZOOM : candidate);
 };
 
 export const formatZoomPercent = (zoom: number) => {
@@ -59,55 +82,48 @@ export const formatZoomPercent = (zoom: number) => {
 };
 
 /**
- * Move through the view's 100% reference as a stable zoom stop. Using
+ * Move through the image's actual 100% scale as a stable zoom stop. Using
  * reciprocal factors keeps zoom-in followed by zoom-out reversible.
  */
 export const getNextZoom = (
   currentZoom: number,
-  direction: ZoomDirection,
-  referenceZoom = ORIGINAL_ZOOM
+  direction: ZoomDirection
 ) => {
-  const reference = normalizeReferenceZoom(referenceZoom);
-  const normalizedCurrent = isOriginalZoom(currentZoom, reference) ? reference : currentZoom;
+  const finiteCurrent = Number.isFinite(currentZoom)
+    ? clampZoom(currentZoom)
+    : ORIGINAL_ZOOM;
+  const normalizedCurrent = isOriginalZoom(finiteCurrent)
+    ? ORIGINAL_ZOOM
+    : finiteCurrent;
   const candidate =
     direction === 'in'
       ? normalizedCurrent * ZOOM_FACTOR
       : normalizedCurrent / ZOOM_FACTOR;
 
   const crossesOriginal =
-    (normalizedCurrent < reference && candidate > reference) ||
-    (normalizedCurrent > reference && candidate < reference);
+    (normalizedCurrent < ORIGINAL_ZOOM && candidate > ORIGINAL_ZOOM) ||
+    (normalizedCurrent > ORIGINAL_ZOOM && candidate < ORIGINAL_ZOOM);
 
-  return clampZoom(crossesOriginal ? reference : candidate);
+  return clampZoom(crossesOriginal ? ORIGINAL_ZOOM : candidate);
 };
 
 /**
- * Resolve a zoom change while keeping the image center stable. Returning to
- * The view's 100% reference is a reset operation: it matches the 1:1 control
- * and recenters the image rather than retaining a stale enlarged-view pan.
+ * Resolve an interactive zoom change while keeping the image point beneath
+ * the supplied anchor stationary. Explicit 1:1 reset/recentering is handled
+ * separately by the viewer command that owns that behavior.
  */
 export const getZoomTransition = (
   currentZoom: number,
   targetZoom: number,
   currentPanOffset: PanOffset,
   clampPanOffset: (zoom: number, panOffset: PanOffset) => PanOffset,
-  referenceZoom = ORIGINAL_ZOOM
+  anchor: ZoomAnchor = { x: 0, y: 0 }
 ): ZoomTransition => {
   const clampedZoom = clampZoom(targetZoom);
-  const reference = normalizeReferenceZoom(referenceZoom);
-
-  if (isOriginalZoom(clampedZoom, reference)) {
-    return {
-      zoom: reference,
-      fitMode: 'original',
-      panOffset: { x: 0, y: 0 },
-    };
-  }
-
   const ratio = currentZoom > 0 ? clampedZoom / currentZoom : 1;
   const scaledPanOffset = {
-    x: currentPanOffset.x * ratio,
-    y: currentPanOffset.y * ratio,
+    x: anchor.x - (anchor.x - currentPanOffset.x) * ratio,
+    y: anchor.y - (anchor.y - currentPanOffset.y) * ratio,
   };
 
   return {

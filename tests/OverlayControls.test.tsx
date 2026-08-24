@@ -161,6 +161,22 @@ describe('OverlayControls', () => {
     expect(onZoomOut).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the bitmap absolute scale instead of relabeling fit as 100%', async () => {
+    await act(async () => {
+      root.render(
+        <OverlayControls
+          {...createProps({
+            ...imageProps,
+            activeRegion: 'bottom',
+            zoom: 0.5,
+          })}
+        />
+      );
+    });
+
+    expect(container.querySelector('.overlay-status-button')?.textContent).toContain('50%');
+  });
+
   it('does not quantize a precise zoom when editing is committed unchanged', async () => {
     const onSetZoom = vi.fn();
 
@@ -194,7 +210,7 @@ describe('OverlayControls', () => {
     expect(onSetZoom).not.toHaveBeenCalled();
   });
 
-  it('reapplies an unchanged 100% value as a 1:1 reset', async () => {
+  it('leaves an unchanged 100% value alone', async () => {
     const onSetZoom = vi.fn();
 
     await act(async () => {
@@ -222,7 +238,7 @@ describe('OverlayControls', () => {
         ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
 
-    expect(onSetZoom).toHaveBeenCalledWith(1);
+    expect(onSetZoom).not.toHaveBeenCalled();
   });
 
   it('keeps secondary tools behind the top-right more control', async () => {

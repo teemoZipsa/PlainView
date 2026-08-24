@@ -5,8 +5,8 @@ import {
   MIN_ZOOM,
   formatZoomPercent,
   getNextZoom,
-  getRelativeZoom,
   getWheelZoomDirection,
+  getWheelZoomTarget,
   getZoomTransition,
 } from '../src/zoom.ts';
 
@@ -28,15 +28,6 @@ test('zooming across 100% stops at 100% in either direction', () => {
   assert.equal(getNextZoom(1.05, 'out'), 1);
 });
 
-test('a fitted image uses its opening scale as the stable 100% reference', () => {
-  const referenceZoom = 0.5;
-
-  assert.equal(getRelativeZoom(referenceZoom, referenceZoom), 1);
-  assert.equal(getNextZoom(referenceZoom, 'in', referenceZoom), 0.575);
-  assert.equal(getNextZoom(0.575, 'out', referenceZoom), referenceZoom);
-  assert.equal(getNextZoom(0.48, 'in', referenceZoom), referenceZoom);
-});
-
 test('zoom targets remain inside the supported range', () => {
   assert.equal(getNextZoom(MAX_ZOOM, 'in'), MAX_ZOOM);
   assert.equal(getNextZoom(MIN_ZOOM, 'out'), MIN_ZOOM);
@@ -55,6 +46,21 @@ test('zero vertical wheel movement does not request a zoom change', () => {
   assert.equal(getWheelZoomDirection(0), null);
 });
 
+test('mouse wheels keep 15% steps while trackpads zoom continuously', () => {
+  assert.equal(getWheelZoomTarget(1, -100), 1.15);
+  assert.equal(getWheelZoomTarget(1, -3, 1), 1.15);
+  assert.equal(getWheelZoomTarget(1, 0), 1);
+
+  const trackpadTarget = getWheelZoomTarget(1, -1);
+  assert.ok(trackpadTarget > 1);
+  assert.ok(trackpadTarget < 1.01);
+});
+
+test('continuous wheel zoom also stops at actual 100%', () => {
+  assert.equal(getWheelZoomTarget(0.95, -100), 1);
+  assert.equal(getWheelZoomTarget(1.05, 100), 1);
+});
+
 test('zoom labels preserve precision and reserve 100% for actual 1:1', () => {
   assert.equal(formatZoomPercent(1), '100');
   assert.equal(formatZoomPercent(0.996), '99.6');
@@ -65,39 +71,26 @@ test('zoom labels preserve precision and reserve 100% for actual 1:1', () => {
   assert.equal(formatZoomPercent(Number.NaN), '100');
 });
 
-test('setting 100% matches 1:1 and clears the previous pan', () => {
-  let clampCalled = false;
+test('interactive zoom reaching 100% keeps the pointer anchor', () => {
+  const currentZoom = 0.95;
+  const currentPan = { x: 10, y: -5 };
+  const anchor = { x: 100, y: -40 };
   const transition = getZoomTransition(
-    2,
+    currentZoom,
     1,
-    { x: 180, y: -90 },
-    () => {
-      clampCalled = true;
-      return { x: 999, y: 999 };
-    }
+    currentPan,
+    (_zoom, panOffset) => panOffset,
+    anchor
   );
+  const ratio = 1 / currentZoom;
 
   assert.deepEqual(transition, {
     zoom: 1,
-    fitMode: 'original',
-    panOffset: { x: 0, y: 0 },
-  });
-  assert.equal(clampCalled, false);
-});
-
-test('resetting to a fitted 100% reference recenters without changing that reference', () => {
-  const transition = getZoomTransition(
-    1,
-    0.5,
-    { x: 180, y: -90 },
-    () => ({ x: 999, y: 999 }),
-    0.5
-  );
-
-  assert.deepEqual(transition, {
-    zoom: 0.5,
-    fitMode: 'original',
-    panOffset: { x: 0, y: 0 },
+    fitMode: 'auto',
+    panOffset: {
+      x: anchor.x - (anchor.x - currentPan.x) * ratio,
+      y: anchor.y - (anchor.y - currentPan.y) * ratio,
+    },
   });
 });
 
@@ -113,5 +106,21 @@ test('non-100% zoom keeps a scaled, clamped pan offset', () => {
     zoom: 3,
     fitMode: 'auto',
     panOffset: { x: 60, y: -25 },
+  });
+});
+
+test('wheel zoom can keep the image point under the cursor stationary', () => {
+  const transition = getZoomTransition(
+    1,
+    2,
+    { x: 0, y: 0 },
+    (_zoom, panOffset) => panOffset,
+    { x: 120, y: -40 }
+  );
+
+  assert.deepEqual(transition, {
+    zoom: 2,
+    fitMode: 'auto',
+    panOffset: { x: -120, y: 40 },
   });
 });

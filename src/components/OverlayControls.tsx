@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { OverlayRegion } from '../hooks/useOverlayVisibility';
 import type { TFunction } from '../i18n';
 import type { BackgroundMode } from '../types';
-import { formatZoomPercent, isOriginalZoom, MAX_ZOOM, MIN_ZOOM } from '../zoom';
+import { formatZoomPercent, MAX_ZOOM, MIN_ZOOM } from '../zoom';
 
 interface ImageInfo {
   filePath: string | null;
@@ -211,12 +211,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
     setZoomDraft('');
 
     if (!normalized || !Number.isFinite(parsed)) return;
-    if (isUnchanged) {
-      // Confirming an exact 100% is also an explicit request to recenter and
-      // return to 1:1, even if the numeric value did not change.
-      if (isOriginalZoom(zoom)) onSetZoom(1);
-      return;
-    }
+    if (isUnchanged) return;
 
     const clampedPercent = Math.max(
       MIN_ZOOM * 100,

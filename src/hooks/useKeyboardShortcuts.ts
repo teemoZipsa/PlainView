@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 
 interface KeyboardShortcutsProps {
   onOpenImage: () => void;
-  onClose: () => void;
+  onEscape: () => void;
+  onToggleFullscreen: () => void;
   onPrevImage: () => void;
   onNextImage: () => void;
   onFirstImage: () => void;
@@ -91,15 +92,25 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Let focused controls keep their native keyboard behavior. In
-      // particular, Space must activate a button instead of navigating.
-      if (isInteractiveTarget(e.target)) {
-        return;
-      }
-
       const p = propsRef.current;
 
       if (p.isEnabled && !p.isEnabled()) {
+        return;
+      }
+
+      // Fullscreen keys are global even when a toolbar control has focus. Do
+      // not let key-repeat exit fullscreen and then immediately close the app.
+      if (e.key === 'Escape' || e.key === 'F11') {
+        e.preventDefault();
+        if (e.repeat) return;
+        if (e.key === 'Escape') p.onEscape();
+        else p.onToggleFullscreen();
+        return;
+      }
+
+      // Let focused controls keep their native keyboard behavior. In
+      // particular, Space must activate a button instead of navigating.
+      if (isInteractiveTarget(e.target)) {
         return;
       }
 
@@ -140,10 +151,6 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
       }
 
       switch (e.key) {
-        case 'Escape':
-          e.preventDefault();
-          p.onClose();
-          break;
         case 'ArrowLeft':
         case 'Backspace':
           e.preventDefault();

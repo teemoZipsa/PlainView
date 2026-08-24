@@ -10,7 +10,8 @@ import { useKeyboardShortcuts } from '../src/hooks/useKeyboardShortcuts';
 
 const callbacks = () => ({
   onOpenImage: vi.fn(),
-  onClose: vi.fn(),
+  onEscape: vi.fn(),
+  onToggleFullscreen: vi.fn(),
   onPrevImage: vi.fn(),
   onNextImage: vi.fn(),
   onFirstImage: vi.fn(),
@@ -69,10 +70,37 @@ async function renderShortcuts(handlers: ShortcutCallbacks, enabled = true) {
 }
 
 function press(key: string, options: KeyboardEventInit = {}) {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, ...options }));
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...options,
+  });
+  window.dispatchEvent(event);
+  return event;
 }
 
 describe('useKeyboardShortcuts', () => {
+  it('routes Escape through the viewer escape contract', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+
+    const event = press('Escape');
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(handlers.onEscape).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles fullscreen and prevents the browser F11 behavior', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+
+    const event = press('F11');
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(handlers.onToggleFullscreen).toHaveBeenCalledTimes(1);
+  });
+
   it('routes one unified copy shortcut with the Windows-style file actions', async () => {
     const handlers = callbacks();
     await renderShortcuts(handlers);
@@ -103,10 +131,52 @@ describe('useKeyboardShortcuts', () => {
     press('c', { ctrlKey: true });
     press('p', { ctrlKey: true });
     press('F2');
+    press('Escape');
+    press('F11');
 
     expect(handlers.onCopy).not.toHaveBeenCalled();
     expect(handlers.onPrint).not.toHaveBeenCalled();
     expect(handlers.onRename).not.toHaveBeenCalled();
+    expect(handlers.onEscape).not.toHaveBeenCalled();
+    expect(handlers.onToggleFullscreen).not.toHaveBeenCalled();
+  });
+
+  it('keeps Escape and F11 global when a toolbar control has focus', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+    const button = document.createElement('button');
+    container.append(button);
+
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    const fullscreen = new KeyboardEvent('keydown', {
+      key: 'F11',
+      bubbles: true,
+      cancelable: true,
+    });
+    button.dispatchEvent(escape);
+    button.dispatchEvent(fullscreen);
+
+    expect(escape.defaultPrevented).toBe(true);
+    expect(fullscreen.defaultPrevented).toBe(true);
+    expect(handlers.onEscape).toHaveBeenCalledTimes(1);
+    expect(handlers.onToggleFullscreen).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses repeated Escape and F11 events without rerunning actions', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+
+    const escape = press('Escape', { repeat: true });
+    const fullscreen = press('F11', { repeat: true });
+
+    expect(escape.defaultPrevented).toBe(true);
+    expect(fullscreen.defaultPrevented).toBe(true);
+    expect(handlers.onEscape).not.toHaveBeenCalled();
+    expect(handlers.onToggleFullscreen).not.toHaveBeenCalled();
   });
 
   it('preserves native keyboard behavior inside interactive controls', async () => {

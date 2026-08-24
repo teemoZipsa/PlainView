@@ -1,7 +1,7 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.11",
+  "version": "0.7.12",
   "description": "A lightweight, ad-free image viewer for Windows",
   "license": "MIT",
   "repository": {
@@ -15,9 +15,9 @@
     "build": "tsc && vite build",
     "test": "npm run test:node && npm run test:ui",
     "test:node": "node --test tests/contextMenuGeometry.test.ts tests/clipboardCopy.test.ts tests/imageCache.test.ts tests/imageFormats.test.ts tests/updateCheck.test.ts tests/imageCanvas.test.ts tests/windowGeometry.test.ts tests/zoom.test.ts tests/viewState.test.ts tests/asyncIntent.test.ts tests/nativeDialogGuard.test.ts tests/serializedTaskQueue.test.ts",
-    "test:ui": "vitest run tests/ContextMenu.test.tsx tests/EmptyContextMenu.test.tsx tests/AboutModal.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx tests/modalKeyboard.test.ts",
+    "test:ui": "vitest run tests/ContextMenu.test.tsx tests/EmptyContextMenu.test.tsx tests/AboutModal.test.tsx tests/WindowResizeHandles.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx tests/modalKeyboard.test.ts",
     "test:context-menu": "node --test tests/contextMenuGeometry.test.ts",
-    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/EmptyContextMenu.test.tsx tests/AboutModal.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx tests/modalKeyboard.test.ts",
+    "test:context-menu-ui": "vitest run tests/ContextMenu.test.tsx tests/EmptyContextMenu.test.tsx tests/AboutModal.test.tsx tests/WindowResizeHandles.test.tsx tests/useKeyboardShortcuts.test.tsx tests/useOverlayVisibility.test.ts tests/SettingsModal.test.tsx tests/ErrorView.test.tsx tests/EmptyView.test.tsx tests/OverlayControls.test.tsx tests/useFolderSync.test.tsx tests/modalKeyboard.test.ts",
     "test:clipboard": "node --test tests/clipboardCopy.test.ts",
     "test:image-cache": "node --test tests/imageCache.test.ts",
     "test:image-formats": "node --test tests/imageFormats.test.ts",

@@ -25,7 +25,7 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, E_INVALIDARG,
-    HWND, LPARAM, LRESULT, RECT, WPARAM,
+    HWND, LPARAM, LRESULT, WPARAM,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Graphics::Dwm::{
@@ -39,17 +39,13 @@ use windows_sys::Win32::Storage::FileSystem::{
 #[cfg(windows)]
 use windows_sys::Win32::UI::Controls::MARGINS;
 #[cfg(windows)]
-use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
-#[cfg(windows)]
 use windows_sys::Win32::UI::Shell::{
     DefSubclassProc, RemoveWindowSubclass, SHObjectProperties, SHOpenWithDialog, SetWindowSubclass,
     ShellExecuteExW, OAIF_EXEC, OPENASINFO, SEE_MASK_FLAG_NO_UI, SHELLEXECUTEINFOW, SHOP_FILEPATH,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsZoomed, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP,
-    HTTOPLEFT, HTTOPRIGHT, SM_CXPADDEDBORDER, SM_CXSIZEFRAME, SM_CYSIZEFRAME, SW_SHOWNORMAL,
-    WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST,
+    IsZoomed, SW_SHOWNORMAL, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY,
 };
 
 /// Supported image extensions
@@ -145,78 +141,6 @@ fn full_client_area_result(message: u32, wparam: WPARAM, is_maximized: bool) -> 
 }
 
 #[cfg(windows)]
-fn signed_low_word(value: LPARAM) -> i32 {
-    (value as u32 as u16 as i16) as i32
-}
-
-#[cfg(windows)]
-fn signed_high_word(value: LPARAM) -> i32 {
-    (((value as u32 >> 16) as u16) as i16) as i32
-}
-
-#[cfg(windows)]
-fn resize_hit_test(
-    rect: RECT,
-    cursor_x: i32,
-    cursor_y: i32,
-    border_x: i32,
-    border_y: i32,
-    is_maximized: bool,
-) -> Option<LRESULT> {
-    if is_maximized
-        || cursor_x < rect.left
-        || cursor_x >= rect.right
-        || cursor_y < rect.top
-        || cursor_y >= rect.bottom
-    {
-        return None;
-    }
-
-    let border_x = border_x.max(1);
-    let border_y = border_y.max(1);
-    let on_left = cursor_x < rect.left.saturating_add(border_x);
-    let on_right = cursor_x >= rect.right.saturating_sub(border_x);
-    let on_top = cursor_y < rect.top.saturating_add(border_y);
-    let on_bottom = cursor_y >= rect.bottom.saturating_sub(border_y);
-
-    match (on_left, on_right, on_top, on_bottom) {
-        (true, _, true, _) => Some(HTTOPLEFT as LRESULT),
-        (_, true, true, _) => Some(HTTOPRIGHT as LRESULT),
-        (true, _, _, true) => Some(HTBOTTOMLEFT as LRESULT),
-        (_, true, _, true) => Some(HTBOTTOMRIGHT as LRESULT),
-        (true, _, _, _) => Some(HTLEFT as LRESULT),
-        (_, true, _, _) => Some(HTRIGHT as LRESULT),
-        (_, _, true, _) => Some(HTTOP as LRESULT),
-        (_, _, _, true) => Some(HTBOTTOM as LRESULT),
-        _ => None,
-    }
-}
-
-#[cfg(windows)]
-fn native_resize_hit_test(hwnd: HWND, lparam: LPARAM, is_maximized: bool) -> Option<LRESULT> {
-    let mut rect = RECT::default();
-    if unsafe { GetWindowRect(hwnd, std::ptr::addr_of_mut!(rect)) } == 0 {
-        return None;
-    }
-
-    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
-    let padded_border = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
-    let border_x =
-        unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) }.saturating_add(padded_border);
-    let border_y =
-        unsafe { GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) }.saturating_add(padded_border);
-
-    resize_hit_test(
-        rect,
-        signed_low_word(lparam),
-        signed_high_word(lparam),
-        border_x,
-        border_y,
-        is_maximized,
-    )
-}
-
-#[cfg(windows)]
 unsafe extern "system" fn borderless_window_subclass(
     hwnd: HWND,
     message: u32,
@@ -229,12 +153,6 @@ unsafe extern "system" fn borderless_window_subclass(
 
     if let Some(result) = full_client_area_result(message, wparam, is_maximized) {
         return result;
-    }
-
-    if message == WM_NCHITTEST {
-        if let Some(result) = native_resize_hit_test(hwnd, lparam, is_maximized) {
-            return result;
-        }
     }
 
     if message == WM_DWMCOMPOSITIONCHANGED {
@@ -2359,42 +2277,6 @@ mod tests {
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 0, false), None);
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 1, true), None);
         assert_eq!(full_client_area_result(WM_NCDESTROY, 1, false), None);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn borderless_hit_test_exposes_all_edges_and_diagonal_corners() {
-        let rect = RECT {
-            left: -1200,
-            top: 100,
-            right: -400,
-            bottom: 700,
-        };
-
-        let hit = |x, y| resize_hit_test(rect, x, y, 8, 8, false);
-
-        assert_eq!(hit(-1198, 102), Some(HTTOPLEFT as LRESULT));
-        assert_eq!(hit(-800, 102), Some(HTTOP as LRESULT));
-        assert_eq!(hit(-402, 102), Some(HTTOPRIGHT as LRESULT));
-        assert_eq!(hit(-1198, 400), Some(HTLEFT as LRESULT));
-        assert_eq!(hit(-402, 400), Some(HTRIGHT as LRESULT));
-        assert_eq!(hit(-1198, 698), Some(HTBOTTOMLEFT as LRESULT));
-        assert_eq!(hit(-800, 698), Some(HTBOTTOM as LRESULT));
-        assert_eq!(hit(-402, 698), Some(HTBOTTOMRIGHT as LRESULT));
-        assert_eq!(hit(-800, 400), None);
-        assert_eq!(resize_hit_test(rect, -1198, 102, 8, 8, true), None);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn hit_test_coordinates_preserve_negative_monitor_positions() {
-        let x = -1198i16;
-        let y = -250i16;
-        let packed = ((y as u16 as u32) << 16) | x as u16 as u32;
-        let lparam = packed as LPARAM;
-
-        assert_eq!(signed_low_word(lparam), i32::from(x));
-        assert_eq!(signed_high_word(lparam), i32::from(y));
     }
 
     #[cfg(windows)]

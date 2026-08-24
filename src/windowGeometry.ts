@@ -11,7 +11,7 @@ export interface PanOffset {
 /**
  * Mixed-DPI transitions can leave the WebView and image dimensions apart by a
  * fraction of a CSS pixel. Treat that rounding as fitted content, not pannable
- * overflow, so dragging continues to move the window at monitor boundaries.
+ * overflow, so the viewer does not expose a misleading image-pan cursor.
  */
 export const PAN_OVERFLOW_TOLERANCE = 2;
 
@@ -24,6 +24,12 @@ export const hasPanOverflow = (
 ) =>
   exceedsPanBoundary(rendered.width, viewport.width) ||
   exceedsPanBoundary(rendered.height, viewport.height);
+
+/** Auto-size only the first successfully displayed image in a fresh window. */
+export const shouldAutoSizeWindowForImage = (
+  hasDisplayedImage: boolean,
+  initialSizingPending: boolean
+) => !hasDisplayedImage && initialSizingPending;
 
 export const resolveViewportDimensions = (
   fallback: ViewportDimensions,

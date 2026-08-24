@@ -15,6 +15,11 @@ import AboutModal from './components/AboutModal';
 import EmptyContextMenu, {
   EMPTY_CONTEXT_MENU_ESTIMATED_HEIGHT,
 } from './components/EmptyContextMenu';
+import WindowResizeHandles, {
+  canStartWindowResize,
+  type WindowResizeDirection,
+  type WindowResizeState,
+} from './components/WindowResizeHandles';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
@@ -33,13 +38,13 @@ import {
   exceedsPanBoundary,
   hasPanOverflow,
   resolveViewportDimensions,
+  shouldAutoSizeWindowForImage,
 } from './windowGeometry';
 import {
-  getWheelZoomDirection,
   getNextZoom,
-  getRelativeZoom,
+  getWheelZoomTarget,
   getZoomTransition,
-  normalizeReferenceZoom,
+  type ZoomAnchor,
   type ZoomDirection,
 } from './zoom';
 import {
@@ -72,9 +77,13 @@ import './App.css';
 const SCREEN_FIT_RATIO = 0.92;
 const MIN_WINDOW_WIDTH = 280;
 const MIN_WINDOW_HEIGHT = 240;
+
 interface FullscreenSnapshot extends ViewTransformState {
   currentFilePath: string | null;
 }
+
+type FullscreenIntent = 'toggle' | 'exit-if-active';
+type FullscreenResult = 'entered' | 'exited' | 'inactive' | 'failed';
 
 interface AppRegistrationDraft {
   executablePath: string;
@@ -121,7 +130,6 @@ function App() {
     imageList: [],
     currentIndex: -1,
     zoom: 1,
-    referenceZoom: 1,
     rotation: 0,
     fitMode: 'auto',
     panOffset: { x: 0, y: 0 },
@@ -138,6 +146,12 @@ function App() {
     width: window.innerWidth,
     height: window.innerHeight,
   }));
+  const [windowMode, setWindowMode] = useState<WindowResizeState>({
+    ready: false,
+    isFullscreen: false,
+    isMaximized: false,
+  });
+  const [isPanning, setIsPanning] = useState(false);
   const [customOpenApps, setCustomOpenApps] = useState<CustomOpenApp[]>([]);
   const [registrationDraft, setRegistrationDraft] = useState<AppRegistrationDraft | null>(null);
   const [renameDraft, setRenameDraft] = useState<RenameDraft | null>(null);
@@ -187,6 +201,7 @@ function App() {
     customOpenApps: [],
   });
 
+  const appContainerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
   const {
     contextMenu,
@@ -208,13 +223,14 @@ function App() {
   const viewerImageRef = useRef<HTMLImageElement>(null);
   const printCanvasRef = useRef<HTMLCanvasElement>(null);
   const isDraggingRef = useRef(false);
+  const activePointerIdRef = useRef<number | null>(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
   const dragModeRef = useRef<DragMode>('none');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenSnapshotRef = useRef<FullscreenSnapshot | null>(null);
-  const isFullscreenProcessingRef = useRef(false);
+  const fullscreenQueueRef = useRef(new SerializedTaskQueue());
   const isCopyingRef = useRef(false);
   const isPrintingRef = useRef(false);
   const isClosingRef = useRef(false);
@@ -236,6 +252,8 @@ function App() {
     count: number;
   } | null>(null);
   const viewerStateRef = useRef(state);
+  const windowModeRef = useRef(windowMode);
+  const windowModeVersionRef = useRef(0);
   const failedLoadRef = useRef(failedLoad);
 
   // User image intents and background refreshes use separate generations so
@@ -244,7 +262,40 @@ function App() {
   const folderRefreshIntentRef = useRef(new LatestIntent());
 
   viewerStateRef.current = state;
+  windowModeRef.current = windowMode;
   failedLoadRef.current = failedLoad;
+
+  const updateWindowMode = useCallback(
+    (updates: Partial<WindowResizeState>) => {
+      const next = { ...windowModeRef.current, ...updates };
+      windowModeVersionRef.current += 1;
+      windowModeRef.current = next;
+      setWindowMode(next);
+    },
+    []
+  );
+
+  const stopPanning = useCallback(() => {
+    const pointerId = activePointerIdRef.current;
+    const appContainer = appContainerRef.current;
+    if (
+      pointerId !== null &&
+      appContainer &&
+      typeof appContainer.hasPointerCapture === 'function' &&
+      appContainer.hasPointerCapture(pointerId)
+    ) {
+      try {
+        appContainer.releasePointerCapture(pointerId);
+      } catch {
+        // The OS may already have released the pointer.
+      }
+    }
+
+    isDraggingRef.current = false;
+    dragModeRef.current = 'none';
+    activePointerIdRef.current = null;
+    setIsPanning(false);
+  }, []);
 
   const {
     loadImage,
@@ -521,21 +572,18 @@ function App() {
   );
 
   const setZoomWithCenter = useCallback(
-    (targetZoomRatio: number) => {
+    (targetZoom: number) => {
       setState((prev) => {
-        const referenceZoom = normalizeReferenceZoom(prev.referenceZoom);
         const transition = getZoomTransition(
           prev.zoom,
-          referenceZoom * targetZoomRatio,
+          targetZoom,
           prev.panOffset,
           (zoom, panOffset) =>
-            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset),
-          referenceZoom
+            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset)
         );
 
         return {
           ...prev,
-          referenceZoom,
           ...transition,
         };
       });
@@ -543,24 +591,43 @@ function App() {
     [clampPanOffset]
   );
 
-  const scaleZoomWithCenter = useCallback(
-    (direction: ZoomDirection) => {
+  const scaleZoom = useCallback(
+    (direction: ZoomDirection, anchor: ZoomAnchor = { x: 0, y: 0 }) => {
       setState((prev) => {
-        const referenceZoom = normalizeReferenceZoom(prev.referenceZoom);
         const transition = getZoomTransition(
           prev.zoom,
-          getNextZoom(prev.zoom, direction, referenceZoom),
+          getNextZoom(prev.zoom, direction),
           prev.panOffset,
           (zoom, panOffset) =>
             clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset),
-          referenceZoom
+          anchor
         );
 
         return {
           ...prev,
-          referenceZoom,
           ...transition,
         };
+      });
+    },
+    [clampPanOffset]
+  );
+
+  const scaleWheelZoom = useCallback(
+    (deltaY: number, deltaMode: number, anchor: ZoomAnchor) => {
+      setState((prev) => {
+        const targetZoom = getWheelZoomTarget(prev.zoom, deltaY, deltaMode);
+        if (targetZoom === prev.zoom) return prev;
+
+        const transition = getZoomTransition(
+          prev.zoom,
+          targetZoom,
+          prev.panOffset,
+          (zoom, panOffset) =>
+            clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset),
+          anchor
+        );
+
+        return { ...prev, ...transition };
       });
     },
     [clampPanOffset]
@@ -571,6 +638,12 @@ function App() {
   const openImage = useCallback(
     async (filePath: string, imageList?: string[], index?: number) => {
       const myRequestId = imageIntentRef.current.begin();
+      const shouldInitializeWindowSize = shouldAutoSizeWindowForImage(
+        Boolean(viewerStateRef.current.imageSrc),
+        centerAfterNextResizeRef.current
+      );
+      stopPanning();
+      hasDraggedRef.current = false;
       setFailedLoad(null);
       updateGifPause(null);
       gifClickSequenceRef.current = null;
@@ -617,7 +690,7 @@ function App() {
         if (!imageIntentRef.current.isCurrent(myRequestId)) return;
 
         let didResizeWindow = false;
-        if (!isFullscreen) {
+        if (!isFullscreen && shouldInitializeWindowSize) {
           try {
             await invoke('resize_window', { width: winW, height: winH });
             didResizeWindow = true;
@@ -625,10 +698,7 @@ function App() {
             // Continue with the actual viewer size instead of assuming resize success.
           }
 
-          // The initial saved placement is restored once during startup. New
-          // images must not snap an already moved window back to an old point.
-          if (didResizeWindow && centerAfterNextResizeRef.current) {
-            centerAfterNextResizeRef.current = false;
+          if (didResizeWindow) {
             try {
               await getCurrentWindow().center();
             } catch {
@@ -645,9 +715,33 @@ function App() {
         // Stale request guard after async window ops
         if (!imageIntentRef.current.isCurrent(myRequestId)) return;
 
+        let isFullscreenAtCommit = isFullscreen;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          let latestFullscreen: boolean;
+          try {
+            latestFullscreen = await getCurrentWindow().isFullscreen();
+          } catch {
+            // Retain the last verified native state if the refresh fails.
+            break;
+          }
+          if (!imageIntentRef.current.isCurrent(myRequestId)) return;
+          if (latestFullscreen === isFullscreenAtCommit) break;
+
+          isFullscreenAtCommit = latestFullscreen;
+          await waitForNextFrame();
+          await waitForNextFrame();
+          if (!imageIntentRef.current.isCurrent(myRequestId)) return;
+        }
+
+        if (shouldInitializeWindowSize) {
+          centerAfterNextResizeRef.current = false;
+        }
+
         const viewerRect = viewerRef.current?.getBoundingClientRect();
         const fitViewport = resolveViewportDimensions(
-          { width: winW, height: winH },
+          didResizeWindow && isFullscreenAtCommit === isFullscreen
+            ? { width: winW, height: winH }
+            : { width: window.innerWidth, height: window.innerHeight },
           viewerRect
             ? { width: viewerRect.width, height: viewerRect.height }
             : null
@@ -660,15 +754,13 @@ function App() {
           fitViewport.height
         );
         const defaultFitMode = settingsRef.current.defaultFitMode;
-        const displayZoom = normalizeReferenceZoom(
-          defaultFitMode === 'original' ? 1 : fitZoom
-        );
+        const displayZoom = defaultFitMode === 'original' ? 1 : fitZoom;
         const displayFitMode: FitMode =
           defaultFitMode === 'fit'
             ? 'fit'
             : defaultFitMode === 'original'
               ? 'original'
-              : isFullscreen
+              : isFullscreenAtCommit
                 ? 'fit'
                 : 'auto';
 
@@ -683,7 +775,6 @@ function App() {
           originalExtension: result.originalExtension,
           naturalSize: { width: naturalW, height: naturalH },
           zoom: displayZoom,
-          referenceZoom: displayZoom,
           fitMode: displayFitMode,
           panOffset: { x: 0, y: 0 },
           rotation: 0,
@@ -725,6 +816,7 @@ function App() {
       calculateFitZoomForSize,
       state.imageList,
       state.currentIndex,
+      stopPanning,
       updateGifPause,
     ]
   );
@@ -938,24 +1030,20 @@ function App() {
   // ---- Zoom ----
 
   const zoomIn = useCallback(() => {
-    scaleZoomWithCenter('in');
-  }, [scaleZoomWithCenter]);
+    scaleZoom('in');
+  }, [scaleZoom]);
 
   const zoomOut = useCallback(() => {
-    scaleZoomWithCenter('out');
-  }, [scaleZoomWithCenter]);
+    scaleZoom('out');
+  }, [scaleZoom]);
 
   const setOriginalSize = useCallback(() => {
-    setState((prev) => {
-      const referenceZoom = normalizeReferenceZoom(prev.referenceZoom);
-      return {
-        ...prev,
-        zoom: referenceZoom,
-        referenceZoom,
-        fitMode: 'original' as const,
-        panOffset: { x: 0, y: 0 },
-      };
-    });
+    setState((prev) => ({
+      ...prev,
+      zoom: 1,
+      fitMode: 'original' as const,
+      panOffset: { x: 0, y: 0 },
+    }));
   }, []);
 
   const fitToScreen = useCallback(() => {
@@ -965,11 +1053,9 @@ function App() {
         prev.naturalSize.height,
         prev.rotation
       );
-      const referenceZoom = normalizeReferenceZoom(fitZoom);
       return {
         ...prev,
-        zoom: referenceZoom,
-        referenceZoom,
+        zoom: fitZoom,
         fitMode: 'fit' as const,
         panOffset: { x: 0, y: 0 },
       };
@@ -1314,7 +1400,6 @@ function App() {
           imageList: [],
           currentIndex: -1,
           zoom: 1,
-          referenceZoom: 1,
           rotation: 0,
           fitMode: 'auto',
           panOffset: { x: 0, y: 0 },
@@ -1571,7 +1656,6 @@ function App() {
           imageList: [],
           currentIndex: -1,
           zoom: 1,
-          referenceZoom: 1,
           rotation: 0,
           fitMode: 'auto',
           panOffset: { x: 0, y: 0 },
@@ -1796,25 +1880,29 @@ function App() {
   const handleWheel = useCallback(
     (e: React.WheelEvent) => {
       if (!state.imageSrc || state.isLoading || state.errorMessage) return;
-
-      const direction = getWheelZoomDirection(e.deltaY);
-      if (!direction) return;
+      if (e.deltaY === 0) return;
 
       e.preventDefault();
-      if (direction === 'in') {
-        zoomIn();
-      } else {
-        zoomOut();
-      }
+      const viewerRect = viewerRef.current?.getBoundingClientRect();
+      const anchor = viewerRect
+        ? {
+            x: e.clientX - viewerRect.left - viewerRect.width / 2,
+            y: e.clientY - viewerRect.top - viewerRect.height / 2,
+          }
+        : { x: 0, y: 0 };
+
+      scaleWheelZoom(e.deltaY, e.deltaMode, anchor);
     },
-    [state.imageSrc, state.isLoading, state.errorMessage, zoomIn, zoomOut]
+    [scaleWheelZoom, state.errorMessage, state.imageSrc, state.isLoading]
   );
 
   // ---- Drag / Pan ----
 
   const getDragMode = useCallback(
     (altKey: boolean): DragMode => {
-      if (altKey) return 'window-move';
+      if (altKey) {
+        return windowModeRef.current.isFullscreen ? 'none' : 'window-move';
+      }
 
       const viewport = getViewportSize();
       const rendered = getRenderedSize(
@@ -1827,18 +1915,22 @@ function App() {
       if (hasPanOverflow(rendered, viewport)) {
         return 'image-pan';
       }
-      return 'window-move';
+      return 'none';
     },
     [state.naturalSize, state.zoom, state.rotation, getViewportSize, getRenderedSize]
   );
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
       if (contextMenu) return;
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
       if (target.closest('.modal-backdrop')) return;
+      if (target.closest('.window-resize-handle')) return;
       if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
+        return;
+      }
+      if (!e.altKey && (!state.imageSrc || state.isLoading || state.errorMessage)) {
         return;
       }
       if (state.imageSrc && target.closest('.image-container') && e.detail > 1) {
@@ -1847,10 +1939,15 @@ function App() {
         return;
       }
 
-      const mode = getDragMode(e.altKey);
+      hasDraggedRef.current = false;
+      const mode =
+        e.altKey || target.closest('.image-container')
+          ? getDragMode(e.altKey)
+          : 'none';
+      if (mode === 'none') return;
+
       dragModeRef.current = mode;
       isDraggingRef.current = true;
-      hasDraggedRef.current = false;
       dragStartRef.current = { x: e.clientX, y: e.clientY };
       panStartRef.current = { ...state.panOffset };
 
@@ -1860,18 +1957,45 @@ function App() {
           console.warn('Failed to start window dragging:', error);
         });
         isDraggingRef.current = false;
+        dragModeRef.current = 'none';
+      } else {
+        activePointerIdRef.current = e.pointerId;
+        setIsPanning(true);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // Pointer capture is a progressive enhancement; global loss handlers
+          // still reset the drag if the platform declines it.
+        }
       }
 
       e.preventDefault();
     },
-    [contextMenu, getDragMode, state.imageSrc, state.panOffset]
+    [
+      contextMenu,
+      getDragMode,
+      state.errorMessage,
+      state.imageSrc,
+      state.isLoading,
+      state.panOffset,
+    ]
   );
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
       overlay.handleMouseMove(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
 
       if (!isDraggingRef.current || dragModeRef.current !== 'image-pan') return;
+      if (
+        activePointerIdRef.current !== null &&
+        e.pointerId !== activePointerIdRef.current
+      ) {
+        return;
+      }
+      if (e.pointerType === 'mouse' && (e.buttons & 1) === 0) {
+        stopPanning();
+        return;
+      }
 
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
@@ -1909,16 +2033,46 @@ function App() {
         panOffset: { x: newX, y: newY },
       }));
     },
-    [overlay, state.naturalSize, state.zoom, state.rotation, getViewportSize, getRenderedSize]
+    [
+      getRenderedSize,
+      getViewportSize,
+      overlay,
+      state.naturalSize,
+      state.rotation,
+      state.zoom,
+      stopPanning,
+    ]
   );
 
-  const handleMouseUp = useCallback(() => {
-    isDraggingRef.current = false;
-    dragModeRef.current = 'none';
-  }, []);
+  const handlePointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const pointerId = activePointerIdRef.current;
+      if (pointerId !== null && event.pointerId !== pointerId) return;
 
-  const handleMoveMouseDown = useCallback(async (event: React.MouseEvent) => {
+      if (
+        pointerId !== null &&
+        typeof event.currentTarget.hasPointerCapture === 'function' &&
+        event.currentTarget.hasPointerCapture(pointerId)
+      ) {
+        try {
+          event.currentTarget.releasePointerCapture(pointerId);
+        } catch {
+          // The pointer may already have been released by the OS.
+        }
+      }
+      stopPanning();
+    },
+    [stopPanning]
+  );
+
+  const handleMovePointerDown = useCallback(async (event: React.PointerEvent) => {
     if (event.button !== 0) return;
+    if (windowModeRef.current.isFullscreen) return;
+    if (contextMenu) {
+      closeContextMenu();
+      return;
+    }
+    if (isInteractionBlocked()) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -1928,7 +2082,29 @@ function App() {
     } catch (error) {
       console.warn('Failed to start window dragging:', error);
     }
-  }, []);
+  }, [closeContextMenu, contextMenu, isInteractionBlocked]);
+
+  const handleResizeStart = useCallback(
+    (direction: WindowResizeDirection) => {
+      const mode = windowModeRef.current;
+      if (!canStartWindowResize(mode)) return;
+      if (contextMenu) {
+        closeContextMenu();
+        return;
+      }
+      if (isInteractionBlocked()) return;
+
+      isDraggingRef.current = false;
+      dragModeRef.current = 'none';
+      activePointerIdRef.current = null;
+      setIsPanning(false);
+
+      void getCurrentWindow().startResizeDragging(direction).catch((error) => {
+        console.warn(`Failed to start ${direction} window resize:`, error);
+      });
+    },
+    [closeContextMenu, contextMenu, isInteractionBlocked]
+  );
 
   const handleImageClick = useCallback(
     (event: React.MouseEvent<HTMLImageElement>) => {
@@ -1996,35 +2172,35 @@ function App() {
     ]
   );
 
-  const handleViewerDoubleClick = useCallback(
-    async (event: React.MouseEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      const gifClickSequence = gifClickSequenceRef.current;
-      if (gifClickSequence?.filePath === state.currentFilePath) {
-        updateGifPause(gifClickSequence.initialPause);
-        gifClickSequenceRef.current = null;
-      }
-
-      if (isFullscreenProcessingRef.current || !state.imageSrc) return;
-      isFullscreenProcessingRef.current = true;
+  const performFullscreenIntent = useCallback(
+    async (intent: FullscreenIntent): Promise<FullscreenResult> => {
+      stopPanning();
+      let attemptedEntry = false;
 
       try {
         const appWindow = getCurrentWindow();
         const isFullscreen = await appWindow.isFullscreen();
 
+        if (intent === 'exit-if-active' && !isFullscreen) return 'inactive';
+
         if (!isFullscreen) {
+          const current = viewerStateRef.current;
+          if (!current.imageSrc) return 'inactive';
+
           fullscreenSnapshotRef.current = {
-            currentFilePath: state.currentFilePath,
-            zoom: state.zoom,
-            referenceZoom: state.referenceZoom,
-            rotation: state.rotation,
-            fitMode: state.fitMode,
-            panOffset: { ...state.panOffset },
+            currentFilePath: current.currentFilePath,
+            zoom: current.zoom,
+            rotation: current.rotation,
+            fitMode: current.fitMode,
+            panOffset: { ...current.panOffset },
           };
+          attemptedEntry = true;
 
           await appWindow.setFullscreen(true);
+          updateWindowMode({
+            ready: true,
+            isFullscreen: true,
+          });
           await waitForNextFrame();
           await waitForNextFrame();
 
@@ -2044,10 +2220,17 @@ function App() {
               ...createFittedView(prev.rotation, fitZoom),
             };
           });
-          return;
+          return 'entered';
         }
 
         await appWindow.setFullscreen(false);
+        let isMaximized = false;
+        try {
+          isMaximized = await appWindow.isMaximized();
+        } catch {
+          // A following resize/focus event will refresh this cached state.
+        }
+        updateWindowMode({ ready: true, isFullscreen: false, isMaximized });
 
         const snapshot = fullscreenSnapshotRef.current;
         fullscreenSnapshotRef.current = null;
@@ -2061,26 +2244,43 @@ function App() {
             };
           });
         }
+        return 'exited';
       } catch {
-        // Ignore fullscreen failures; the viewer remains usable.
-      } finally {
-        isFullscreenProcessingRef.current = false;
+        if (attemptedEntry) fullscreenSnapshotRef.current = null;
+        return 'failed';
       }
     },
-    [
-      calculateFitZoomForSize,
-      state.currentFilePath,
-      state.fitMode,
-      state.imageSrc,
-      state.naturalSize.height,
-      state.naturalSize.width,
-      state.panOffset,
-      state.referenceZoom,
-      state.rotation,
-      state.zoom,
-      updateGifPause,
-    ]
+    [calculateFitZoomForSize, stopPanning, updateWindowMode]
   );
+
+  const runFullscreenIntent = useCallback(
+    (intent: FullscreenIntent): Promise<FullscreenResult> =>
+      fullscreenQueueRef.current.run(() => performFullscreenIntent(intent)),
+    [performFullscreenIntent]
+  );
+
+  const handleViewerDoubleClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const gifClickSequence = gifClickSequenceRef.current;
+      if (gifClickSequence?.filePath === state.currentFilePath) {
+        updateGifPause(gifClickSequence.initialPause);
+        gifClickSequenceRef.current = null;
+      }
+
+      void runFullscreenIntent('toggle');
+    },
+    [runFullscreenIntent, state.currentFilePath, updateGifPause]
+  );
+
+  const handleEscape = useCallback(async () => {
+    const result = await runFullscreenIntent('exit-if-active');
+    if (result === 'inactive') {
+      await closeApp();
+    }
+  }, [closeApp, runFullscreenIntent]);
 
   const saveWindowBounds = useCallback(async () => {
     if (!settingsLoadedRef.current || !settingsRef.current.rememberWindowPosition) return;
@@ -2108,7 +2308,12 @@ function App() {
     onOpenImage: () => {
       void handleOpenImageDialog();
     },
-    onClose: closeApp,
+    onEscape: () => {
+      void handleEscape();
+    },
+    onToggleFullscreen: () => {
+      void runFullscreenIntent('toggle');
+    },
     onPrevImage: () => navigateImage(-1),
     onNextImage: () => navigateImage(1),
     onFirstImage: () => navigateToIndex(0),
@@ -2146,15 +2351,92 @@ function App() {
       !isInteractionBlocked(),
   });
 
-  // ---- Context menu dismissal ----
-
   useEffect(() => {
-    window.addEventListener('mouseup', handleMouseUp);
+    const handleGlobalPointerEnd = (event: PointerEvent) => {
+      const pointerId = activePointerIdRef.current;
+      if (pointerId === null || event.pointerId !== pointerId) return;
+      stopPanning();
+    };
+    const handleWindowBlur = () => stopPanning();
+    window.addEventListener('pointerup', handleGlobalPointerEnd);
+    window.addEventListener('pointercancel', handleGlobalPointerEnd);
+    window.addEventListener('blur', handleWindowBlur);
 
     return () => {
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointerup', handleGlobalPointerEnd);
+      window.removeEventListener('pointercancel', handleGlobalPointerEnd);
+      window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [handleMouseUp]);
+  }, [stopPanning]);
+
+  // Keep DOM resize affordances in sync with native window state. Tauri does
+  // not expose a dedicated fullscreen/maximized-changed event, so debounced
+  // resize and focus events are used as inexpensive refresh points.
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let cancelled = false;
+    let resizeUnlisten: (() => void) | null = null;
+    let focusUnlisten: (() => void) | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let requestId = 0;
+
+    const refreshWindowMode = async () => {
+      const currentRequestId = ++requestId;
+      const versionAtStart = windowModeVersionRef.current;
+      try {
+        const [isFullscreen, isMaximized] = await Promise.all([
+          appWindow.isFullscreen(),
+          appWindow.isMaximized(),
+        ]);
+        if (
+          cancelled ||
+          currentRequestId !== requestId ||
+          versionAtStart !== windowModeVersionRef.current
+        ) {
+          return;
+        }
+        const current = windowModeRef.current;
+        if (
+          current.ready &&
+          current.isFullscreen === isFullscreen &&
+          current.isMaximized === isMaximized
+        ) {
+          return;
+        }
+        updateWindowMode({ ready: true, isFullscreen, isMaximized });
+      } catch {
+        // Keep resize handles hidden until native state can be verified.
+      }
+    };
+
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void refreshWindowMode();
+      }, 120);
+    };
+
+    void refreshWindowMode();
+    void appWindow.onResized(scheduleRefresh).then((unlisten) => {
+      if (cancelled) unlisten();
+      else resizeUnlisten = unlisten;
+    });
+    void appWindow.onFocusChanged(({ payload }) => {
+      if (payload) scheduleRefresh();
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else focusUnlisten = unlisten;
+    });
+
+    return () => {
+      cancelled = true;
+      requestId += 1;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      resizeUnlisten?.();
+      focusUnlisten?.();
+    };
+  }, [updateWindowMode]);
 
   // ---- Viewer resize handler ----
 
@@ -2179,11 +2461,9 @@ function App() {
             width,
             height
           );
-          const referenceZoom = normalizeReferenceZoom(fitZoom);
           return {
             ...prev,
-            zoom: referenceZoom,
-            referenceZoom,
+            zoom: fitZoom,
             panOffset: { x: 0, y: 0 },
           };
         }
@@ -2380,7 +2660,8 @@ function App() {
   // ---- Cursor style ----
 
   const getCursorStyle = useCallback((): string => {
-    if (isDraggingRef.current && dragModeRef.current === 'image-pan') return 'grabbing';
+    if (isPanning) return 'grabbing';
+    if (!state.imageSrc || state.isLoading || state.errorMessage) return 'default';
 
     const viewport = getViewportSize();
     const rendered = getRenderedSize(
@@ -2394,7 +2675,17 @@ function App() {
       return 'grab';
     }
     return 'default';
-  }, [state.naturalSize, state.zoom, state.rotation, getViewportSize, getRenderedSize]);
+  }, [
+    isPanning,
+    state.errorMessage,
+    state.imageSrc,
+    state.isLoading,
+    state.naturalSize,
+    state.zoom,
+    state.rotation,
+    getViewportSize,
+    getRenderedSize,
+  ]);
 
   // ---- Render ----
 
@@ -2458,18 +2749,34 @@ function App() {
 
   return (
     <div
+      ref={appContainerRef}
       className={`app-container theme-${backgroundMode}`}
       style={{ cursor: getCursorStyle() }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={() => {
-        handleMouseUp();
-        overlay.handleMouseLeave();
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onLostPointerCapture={stopPanning}
+      onPointerLeave={(event) => {
+        if (!isPanning) {
+          overlay.handleMouseLeave();
+          return;
+        }
+
+        const pointerId = activePointerIdRef.current;
+        const hasCapture =
+          pointerId !== null &&
+          typeof event.currentTarget.hasPointerCapture === 'function' &&
+          event.currentTarget.hasPointerCapture(pointerId);
+        if (!hasCapture) stopPanning();
       }}
       onWheel={handleWheel}
       onContextMenu={handleContextMenu}
     >
+      {canStartWindowResize(windowMode) && (
+        <WindowResizeHandles onResizeStart={handleResizeStart} />
+      )}
+
       <div
         ref={viewerRef}
         className="image-container"
@@ -2483,10 +2790,11 @@ function App() {
         <canvas ref={printCanvasRef} className="print-canvas" />
       </div>
 
-      {!!state.imageSrc && !state.isLoading && !state.errorMessage && (
+      {!windowMode.isFullscreen && (
         <div
           className="window-move-zone"
-          onMouseDown={handleMoveMouseDown}
+          aria-hidden="true"
+          onPointerDown={handleMovePointerDown}
         />
       )}
 
@@ -2498,7 +2806,7 @@ function App() {
           backgroundMode={backgroundMode}
           currentIndex={state.currentIndex}
           totalImages={state.imageList.length}
-          zoom={getRelativeZoom(state.zoom, state.referenceZoom)}
+          zoom={state.zoom}
           fileName={state.fileName}
           imageInfo={{
             filePath: state.currentFilePath,
