@@ -1,54 +1,25 @@
-import type { MouseEvent } from 'react';
+import type { ResizeDirection } from '../windowResize';
 
-export const WINDOW_RESIZE_HANDLES = [
-  { direction: 'North', className: 'north' },
-  { direction: 'NorthEast', className: 'north-east' },
-  { direction: 'East', className: 'east' },
-  { direction: 'SouthEast', className: 'south-east' },
-  { direction: 'South', className: 'south' },
-  { direction: 'SouthWest', className: 'south-west' },
-  { direction: 'West', className: 'west' },
-  { direction: 'NorthWest', className: 'north-west' },
-] as const;
+const handles: Array<{ className: string; direction: ResizeDirection }> = [
+  { className: 'north', direction: 'North' },
+  { className: 'north-east', direction: 'NorthEast' },
+  { className: 'east', direction: 'East' },
+  { className: 'south-east', direction: 'SouthEast' },
+  { className: 'south', direction: 'South' },
+  { className: 'south-west', direction: 'SouthWest' },
+  { className: 'west', direction: 'West' },
+  { className: 'north-west', direction: 'NorthWest' },
+];
 
-export type WindowResizeDirection =
-  (typeof WINDOW_RESIZE_HANDLES)[number]['direction'];
-
-export interface WindowResizeState {
-  ready: boolean;
-  isFullscreen: boolean;
-  isMaximized: boolean;
-}
-
-export const canStartWindowResize = (state: WindowResizeState) =>
-  state.ready && !state.isFullscreen && !state.isMaximized;
-
-interface WindowResizeHandlesProps {
-  onResizeStart: (direction: WindowResizeDirection) => void;
-}
-
-export default function WindowResizeHandles({
-  onResizeStart,
-}: WindowResizeHandlesProps) {
-  const handleMouseDown = (
-    event: MouseEvent<HTMLDivElement>,
-    direction: WindowResizeDirection
-  ) => {
-    if (event.button !== 0) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    onResizeStart(direction);
-  };
-
+export default function WindowResizeHandles() {
   return (
     <>
-      {WINDOW_RESIZE_HANDLES.map(({ direction, className }) => (
+      {handles.map(({ className, direction }) => (
         <div
           key={direction}
-          className={`window-resize-handle resize-${className}`}
+          className={`window-resize-handle window-resize-${className}`}
+          data-resize-direction={direction}
           aria-hidden="true"
-          onMouseDown={(event) => handleMouseDown(event, direction)}
         />
       ))}
     </>

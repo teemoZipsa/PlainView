@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
 import { Image as TauriImage } from '@tauri-apps/api/image';
+import { join, pictureDir } from '@tauri-apps/api/path';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { writeImage, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -15,11 +16,7 @@ import AboutModal from './components/AboutModal';
 import EmptyContextMenu, {
   EMPTY_CONTEXT_MENU_ESTIMATED_HEIGHT,
 } from './components/EmptyContextMenu';
-import WindowResizeHandles, {
-  canStartWindowResize,
-  type WindowResizeDirection,
-  type WindowResizeState,
-} from './components/WindowResizeHandles';
+import WindowResizeHandles from './components/WindowResizeHandles';
 import { useImageLoader } from './hooks/useImageLoader';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useOverlayVisibility } from './hooks/useOverlayVisibility';
@@ -60,6 +57,11 @@ import {
 } from './nativeDialogGuard';
 import { SerializedTaskQueue } from './serializedTaskQueue';
 import { handleDialogKeyDown } from './modalKeyboard';
+import {
+  canStartWindowResize,
+  getWindowResizeDirection,
+  type WindowResizeState,
+} from './windowResize';
 import type {
   ViewerState,
   Rotation,
@@ -141,6 +143,7 @@ function App() {
     fileName: '',
     fileSize: 0,
     originalExtension: null,
+    isTemporarySource: false,
   });
   const [viewportSize, setViewportSize] = useState(() => ({
     width: window.innerWidth,
@@ -773,6 +776,7 @@ function App() {
           fileName: result.fileName,
           fileSize: result.fileSize,
           originalExtension: result.originalExtension,
+          isTemporarySource: result.isTemporarySource,
           naturalSize: { width: naturalW, height: naturalH },
           zoom: displayZoom,
           fitMode: displayFitMode,
@@ -907,6 +911,7 @@ function App() {
       const failed = failedLoadRef.current;
       const currentPath = failed?.filePath ?? snapshot.currentFilePath;
       if (!currentPath) return;
+      if (snapshot.isTemporarySource && !failed) return;
 
       const isStillCurrent = () => {
         if (!folderRefreshIntentRef.current.isCurrent(refreshIntent)) return false;
@@ -979,7 +984,7 @@ function App() {
   );
 
   useFolderSync({
-    filePath: failedLoad?.filePath ?? state.currentFilePath,
+    filePath: state.isTemporarySource ? null : (failedLoad?.filePath ?? state.currentFilePath),
     onRefresh: refreshCurrentFolder,
   });
 
@@ -1257,7 +1262,10 @@ function App() {
     if (!state.currentFilePath) return;
 
     try {
-      await revealItemInDir(state.currentFilePath);
+      const availablePath = await invoke<string>('resolve_available_image_path', {
+        path: state.currentFilePath,
+      });
+      await revealItemInDir(availablePath);
     } catch {
       showToast(t('toast.revealFailed'));
     }
@@ -1273,7 +1281,10 @@ function App() {
     if (!state.currentFilePath) return;
 
     try {
-      await writeText(state.currentFilePath);
+      const availablePath = await invoke<string>('resolve_available_image_path', {
+        path: state.currentFilePath,
+      });
+      await writeText(availablePath);
       showToast(t('toast.pathCopySuccess'));
     } catch (error) {
       console.warn('Failed to copy file path:', error);
@@ -1410,6 +1421,7 @@ function App() {
           fileName: '',
           fileSize: 0,
           originalExtension: null,
+          isTemporarySource: false,
         }));
         showToast(t('toast.moveSuccess'));
         return;
@@ -1451,6 +1463,17 @@ function App() {
     const filePathAtStart = state.currentFilePath;
     const ext = state.originalExtension?.toLowerCase() ?? null;
     const filters = ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : undefined;
+    let defaultPath = filePathAtStart;
+
+    if (state.isTemporarySource) {
+      try {
+        const pictures = await pictureDir();
+        defaultPath = await join(pictures, state.fileName || t('app.fileFallback'));
+      } catch {
+        // Keep the original path as the dialog hint when Windows does not
+        // expose a Pictures folder. The retained source still backs the save.
+      }
+    }
 
     let target: string | null;
     try {
@@ -1458,7 +1481,7 @@ function App() {
         nativeDialogGuardRef.current,
         () =>
           saveDialog({
-            defaultPath: filePathAtStart,
+            defaultPath,
             filters,
           })
       );
@@ -1491,6 +1514,7 @@ function App() {
     state.currentFilePath,
     state.errorMessage,
     state.isLoading,
+    state.isTemporarySource,
     state.originalExtension,
     t,
   ]);
@@ -1666,6 +1690,7 @@ function App() {
           fileName: '',
           fileSize: 0,
           originalExtension: null,
+          isTemporarySource: false,
         }));
         showToast(t('toast.trashed', { name: fileNameAtStart }));
         return;
@@ -1898,6 +1923,43 @@ function App() {
 
   // ---- Drag / Pan ----
 
+  const startWindowResize = useCallback(
+    (event: React.PointerEvent | React.MouseEvent): boolean => {
+      if (!canStartWindowResize(windowModeRef.current)) return false;
+      if (contextMenu) {
+        closeContextMenu();
+        return false;
+      }
+      if (isInteractionBlocked()) return false;
+
+      const target = event.target as HTMLElement;
+      if (target.closest('.overlay-btn') || target.closest('.overlay-container')) {
+        return false;
+      }
+
+      const direction = getWindowResizeDirection(
+        event.clientX,
+        event.clientY,
+        window.innerWidth,
+        window.innerHeight
+      );
+      if (!direction) return false;
+
+      isDraggingRef.current = false;
+      dragModeRef.current = 'none';
+      activePointerIdRef.current = null;
+      setIsPanning(false);
+
+      event.preventDefault();
+      event.stopPropagation();
+      void getCurrentWindow()
+        .startResizeDragging(direction)
+        .catch((error) => console.warn(`Failed to start ${direction} window resize:`, error));
+      return true;
+    },
+    [closeContextMenu, contextMenu, isInteractionBlocked]
+  );
+
   const getDragMode = useCallback(
     (altKey: boolean): DragMode => {
       if (altKey) {
@@ -1924,6 +1986,7 @@ function App() {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (contextMenu) return;
       if (e.button !== 0) return;
+      if (startWindowResize(e)) return;
       const target = e.target as HTMLElement;
       if (target.closest('.modal-backdrop')) return;
       if (target.closest('.window-resize-handle')) return;
@@ -1974,11 +2037,20 @@ function App() {
     [
       contextMenu,
       getDragMode,
+      startWindowResize,
       state.errorMessage,
       state.imageSrc,
       state.isLoading,
       state.panOffset,
     ]
+  );
+
+  const handleResizePointerDownCapture = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      startWindowResize(event);
+    },
+    [startWindowResize]
   );
 
   const handlePointerMove = useCallback(
@@ -2073,6 +2145,7 @@ function App() {
       return;
     }
     if (isInteractionBlocked()) return;
+    if (startWindowResize(event)) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -2082,29 +2155,7 @@ function App() {
     } catch (error) {
       console.warn('Failed to start window dragging:', error);
     }
-  }, [closeContextMenu, contextMenu, isInteractionBlocked]);
-
-  const handleResizeStart = useCallback(
-    (direction: WindowResizeDirection) => {
-      const mode = windowModeRef.current;
-      if (!canStartWindowResize(mode)) return;
-      if (contextMenu) {
-        closeContextMenu();
-        return;
-      }
-      if (isInteractionBlocked()) return;
-
-      isDraggingRef.current = false;
-      dragModeRef.current = 'none';
-      activePointerIdRef.current = null;
-      setIsPanning(false);
-
-      void getCurrentWindow().startResizeDragging(direction).catch((error) => {
-        console.warn(`Failed to start ${direction} window resize:`, error);
-      });
-    },
-    [closeContextMenu, contextMenu, isInteractionBlocked]
-  );
+  }, [closeContextMenu, contextMenu, isInteractionBlocked, startWindowResize]);
 
   const handleImageClick = useCallback(
     (event: React.MouseEvent<HTMLImageElement>) => {
@@ -2752,6 +2803,7 @@ function App() {
       ref={appContainerRef}
       className={`app-container theme-${backgroundMode}`}
       style={{ cursor: getCursorStyle() }}
+      onPointerDownCapture={handleResizePointerDownCapture}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -2773,9 +2825,7 @@ function App() {
       onWheel={handleWheel}
       onContextMenu={handleContextMenu}
     >
-      {canStartWindowResize(windowMode) && (
-        <WindowResizeHandles onResizeStart={handleResizeStart} />
-      )}
+      {canStartWindowResize(windowMode) && <WindowResizeHandles />}
 
       <div
         ref={viewerRef}

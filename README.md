@@ -68,6 +68,7 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 - **Adaptive copy** - one `Ctrl+C` or context-menu action supplies both image pixels and the file object so each paste target can automatically choose the compatible format
 - **File path copy** - copy the current image's full path from the context menu
 - **Save as** - save the original image file with `Ctrl+S` or the context menu
+- **Temporary image retention** - keep file actions available through a session-owned copy when a messenger or browser removes or locks an image opened from the Windows temporary folder
 - **Rename** - rename the current image while preserving its file extension
 - **Quick file move** - move the current image to another folder with the context menu or `Ctrl+M`
 - **Recycle Bin support** - move the current image to the Recycle Bin with the context menu or `Delete`
