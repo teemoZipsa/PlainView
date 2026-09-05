@@ -2174,8 +2174,8 @@ fn save_image_as_with_store(
     }
 
     let staged =
-        stage_file_copy(&source, &target).map_err(|e| io_error_to_command("save_failed", e))?;
-    if let Err(error) = replace_file_atomically(&staged, &target) {
+        stage_file_copy(&source, target).map_err(|e| io_error_to_command("save_failed", e))?;
+    if let Err(error) = replace_file_atomically(&staged, target) {
         remove_staged_file(&staged);
         return Err(io_error_to_command("save_failed", error));
     }
