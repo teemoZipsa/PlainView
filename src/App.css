@@ -23,6 +23,7 @@ html, body, #root {
 /* ===== App Container ===== */
 
 .app-container {
+  --window-shadow-gutter: 10px;
   --app-bg: #1a1a1e;
   --text-primary: rgba(255, 255, 255, 0.9);
   --text-secondary: rgba(255, 255, 255, 0.72);
@@ -46,6 +47,8 @@ html, body, #root {
   --divider: rgba(255, 255, 255, 0.15);
   --shadow-panel: 0 12px 32px rgba(0, 0, 0, 0.34);
   --shadow-modal: 0 18px 48px rgba(0, 0, 0, 0.42);
+  --window-surface-border: rgba(255, 255, 255, 0.1);
+  --window-outer-shadow: rgba(0, 0, 0, 0.32);
   --accent: rgba(100, 160, 255, 0.56);
   --accent-strong: rgba(100, 160, 255, 0.65);
   --accent-ring: rgba(100, 160, 255, 0.45);
@@ -60,6 +63,7 @@ html, body, #root {
   width: 100%;
   height: 100%;
   position: relative;
+  isolation: isolate;
   background-color: var(--app-bg);
   color: var(--text-primary);
   overflow: hidden;
@@ -96,6 +100,8 @@ html, body, #root {
   --divider: rgba(31, 35, 40, 0.14);
   --shadow-panel: 0 8px 24px rgba(15, 23, 42, 0.14);
   --shadow-modal: 0 14px 36px rgba(15, 23, 42, 0.16);
+  --window-surface-border: rgba(31, 35, 40, 0.14);
+  --window-outer-shadow: rgba(15, 23, 42, 0.24);
   --accent: rgba(37, 99, 235, 0.16);
   --accent-strong: rgba(37, 99, 235, 0.24);
   --accent-ring: rgba(37, 99, 235, 0.34);
@@ -108,9 +114,34 @@ html, body, #root {
   --spinner-head: rgba(31, 35, 40, 0.46);
 }
 
+.app-container.window-framed {
+  padding: var(--window-shadow-gutter);
+  background-color: transparent;
+}
+
+.app-container.window-framed::before {
+  content: '';
+  position: absolute;
+  inset: var(--window-shadow-gutter);
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--app-bg);
+  border: 1px solid var(--window-surface-border);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 10px var(--window-outer-shadow),
+    0 0 3px rgba(0, 0, 0, 0.16);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
 /* ===== Image Container ===== */
 
 .image-container {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: flex;
@@ -118,6 +149,10 @@ html, body, #root {
   justify-content: center;
   overflow: hidden;
   touch-action: none;
+}
+
+.app-container.window-framed .image-container {
+  border-radius: 8px;
 }
 
 .viewer-image {
@@ -212,6 +247,13 @@ html, body, #root {
   height: 34px;
   z-index: 20;
   cursor: move;
+}
+
+.app-container.window-framed .window-move-zone {
+  top: var(--window-shadow-gutter);
+  right: var(--window-shadow-gutter);
+  left: var(--window-shadow-gutter);
+  width: auto;
 }
 
 .window-move-zone::after {
@@ -539,6 +581,12 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   background-color: var(--surface-backdrop);
+}
+
+.app-container.window-framed .modal-backdrop {
+  inset: var(--window-shadow-gutter);
+  overflow: hidden;
+  border-radius: 8px;
 }
 
 .app-modal {
@@ -952,6 +1000,10 @@ html, body, #root {
     box-shadow 180ms ease;
 }
 
+.app-container.window-framed .toast-message {
+  bottom: calc(78px + var(--window-shadow-gutter));
+}
+
 .toast-icon {
   display: none;
   width: 18px;
@@ -1018,8 +1070,13 @@ html, body, #root {
     width: 100%;
     height: 100%;
     margin: 0;
+    padding: 0;
     overflow: visible;
     background: #ffffff !important;
+  }
+
+  .app-container::before {
+    display: none !important;
   }
 
   .app-container > :not(.print-surface) {
@@ -1052,6 +1109,10 @@ html, body, #root {
   inset: 0;
   pointer-events: none;
   z-index: 100;
+}
+
+.app-container.window-framed .overlay-container {
+  inset: var(--window-shadow-gutter);
 }
 
 .overlay-top-right,

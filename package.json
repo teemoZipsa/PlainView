@@ -1,7 +1,7 @@
 {
   "name": "plainview",
   "private": true,
-  "version": "0.7.13",
+  "version": "0.7.14",
   "description": "A lightweight, ad-free image viewer for Windows",
   "license": "MIT",
   "repository": {

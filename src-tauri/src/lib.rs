@@ -26,7 +26,7 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, E_INVALIDARG,
-    HWND, LPARAM, LRESULT, WPARAM,
+    HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Graphics::Dwm::{
@@ -41,13 +41,17 @@ use windows_sys::Win32::Storage::FileSystem::{
 #[cfg(windows)]
 use windows_sys::Win32::UI::Controls::MARGINS;
 #[cfg(windows)]
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+#[cfg(windows)]
 use windows_sys::Win32::UI::Shell::{
     DefSubclassProc, RemoveWindowSubclass, SHObjectProperties, SHOpenWithDialog, SetWindowSubclass,
     ShellExecuteExW, OAIF_EXEC, OPENASINFO, SEE_MASK_FLAG_NO_UI, SHELLEXECUTEINFOW, SHOP_FILEPATH,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    IsZoomed, SW_SHOWNORMAL, WM_DWMCOMPOSITIONCHANGED, WM_NCCALCSIZE, WM_NCDESTROY,
+    FindWindowExW, GetWindowLongPtrW, GetWindowRect, IsZoomed, PostMessageW, GWL_STYLE,
+    HTBOTTOMLEFT, HTBOTTOMRIGHT, HTTOPLEFT, HTTOPRIGHT, SW_SHOWNORMAL, WM_DWMCOMPOSITIONCHANGED,
+    WM_NCCALCSIZE, WM_NCDESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN, WS_SIZEBOX,
 };
 
 /// Supported image extensions
@@ -65,6 +69,10 @@ const ERROR_NO_ASSOCIATION: u32 = 1155;
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(windows)]
 const BORDERLESS_SUBCLASS_ID: usize = 0x5056_4E43;
+#[cfg(windows)]
+const RESIZE_OVERLAY_SUBCLASS_ID: usize = 0x5056_525A;
+#[cfg(windows)]
+const RESIZE_CORNER_LOGICAL_PX: i32 = 18;
 #[cfg(windows)]
 const HRESULT_ERROR_CANCELLED: i32 = 0x8007_04C7u32 as i32;
 
@@ -145,6 +153,169 @@ fn full_client_area_result(message: u32, wparam: WPARAM, is_maximized: bool) -> 
 }
 
 #[cfg(windows)]
+fn signed_low_word(value: LPARAM) -> i32 {
+    (value as u32 as u16 as i16) as i32
+}
+
+#[cfg(windows)]
+fn signed_high_word(value: LPARAM) -> i32 {
+    (((value as u32 >> 16) as u16) as i16) as i32
+}
+
+#[cfg(windows)]
+fn logical_pixels_at_dpi(logical_pixels: i32, dpi: u32) -> i32 {
+    let scaled = i64::from(logical_pixels.max(1)) * i64::from(dpi.max(96));
+    ((scaled + 95) / 96).min(i64::from(i32::MAX)) as i32
+}
+
+#[cfg(windows)]
+fn resize_corner_hit_test(
+    rect: RECT,
+    cursor_x: i32,
+    cursor_y: i32,
+    corner_x: i32,
+    corner_y: i32,
+) -> Option<LRESULT> {
+    if cursor_x < rect.left
+        || cursor_x >= rect.right
+        || cursor_y < rect.top
+        || cursor_y >= rect.bottom
+    {
+        return None;
+    }
+
+    let corner_x = corner_x.max(1);
+    let corner_y = corner_y.max(1);
+    let near_left = cursor_x < rect.left.saturating_add(corner_x);
+    let near_right = cursor_x >= rect.right.saturating_sub(corner_x);
+    let near_top = cursor_y < rect.top.saturating_add(corner_y);
+    let near_bottom = cursor_y >= rect.bottom.saturating_sub(corner_y);
+
+    match (near_left, near_right, near_top, near_bottom) {
+        (true, _, true, _) => Some(HTTOPLEFT as LRESULT),
+        (_, true, true, _) => Some(HTTOPRIGHT as LRESULT),
+        (true, _, _, true) => Some(HTBOTTOMLEFT as LRESULT),
+        (_, true, _, true) => Some(HTBOTTOMRIGHT as LRESULT),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn native_window_can_resize(hwnd: HWND, is_maximized: bool) -> bool {
+    if hwnd.is_null() || is_maximized {
+        return false;
+    }
+
+    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32;
+    style & WS_SIZEBOX != 0
+}
+
+#[cfg(windows)]
+fn native_resize_corner_hit_test(
+    hwnd: HWND,
+    lparam: LPARAM,
+    is_maximized: bool,
+) -> Option<LRESULT> {
+    if !native_window_can_resize(hwnd, is_maximized) {
+        return None;
+    }
+
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(hwnd, std::ptr::addr_of_mut!(rect)) } == 0 {
+        return None;
+    }
+
+    let corner = logical_pixels_at_dpi(RESIZE_CORNER_LOGICAL_PX, unsafe { GetDpiForWindow(hwnd) });
+    resize_corner_hit_test(
+        rect,
+        signed_low_word(lparam),
+        signed_high_word(lparam),
+        corner,
+        corner,
+    )
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn resize_overlay_subclass(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    subclass_id: usize,
+    reference_data: usize,
+) -> LRESULT {
+    let parent = reference_data as HWND;
+    let is_maximized = unsafe { IsZoomed(parent) != 0 };
+
+    let corner_hit = || native_resize_corner_hit_test(parent, lparam, is_maximized);
+
+    if message == WM_NCHITTEST {
+        if let Some(result) = corner_hit() {
+            return result;
+        }
+    }
+
+    // Tauri's shadowed undecorated resize overlay recomputes every press on its
+    // top strip as HTTOP. Forward our diagonal result directly to the parent so
+    // the operating system keeps both resize axes active.
+    if message == WM_NCLBUTTONDOWN {
+        if let Some(result) = corner_hit() {
+            if unsafe { PostMessageW(parent, message, result as WPARAM, lparam) } != 0 {
+                return 0;
+            }
+        }
+    }
+
+    if message == WM_NCDESTROY {
+        unsafe {
+            RemoveWindowSubclass(hwnd, Some(resize_overlay_subclass), subclass_id);
+        }
+    }
+
+    unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+}
+
+#[cfg(windows)]
+fn install_native_resize_corner_fix(parent: HWND) -> Result<(), String> {
+    let class_name: Vec<u16> = "TAURI_DRAG_RESIZE_BORDERS"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let window_name: Vec<u16> = "TAURI_DRAG_RESIZE_WINDOW"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let overlay = unsafe {
+        FindWindowExW(
+            parent,
+            std::ptr::null_mut(),
+            class_name.as_ptr(),
+            window_name.as_ptr(),
+        )
+    };
+    if overlay.is_null() {
+        return Err("Could not locate the native resize overlay".to_string());
+    }
+
+    let installed = unsafe {
+        SetWindowSubclass(
+            overlay,
+            Some(resize_overlay_subclass),
+            RESIZE_OVERLAY_SUBCLASS_ID,
+            parent as usize,
+        )
+    };
+    if installed == 0 {
+        Err(format!(
+            "Could not install native resize corner handling (Windows error {})",
+            unsafe { GetLastError() }
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
 unsafe extern "system" fn borderless_window_subclass(
     hwnd: HWND,
     message: u32,
@@ -157,6 +328,12 @@ unsafe extern "system" fn borderless_window_subclass(
 
     if let Some(result) = full_client_area_result(message, wparam, is_maximized) {
         return result;
+    }
+
+    if message == WM_NCHITTEST {
+        if let Some(result) = native_resize_corner_hit_test(hwnd, lparam, is_maximized) {
+            return result;
+        }
     }
 
     if message == WM_DWMCOMPOSITIONCHANGED {
@@ -2390,6 +2567,9 @@ pub fn run() {
                     if let Err(error) = install_native_border_suppression(hwnd.0) {
                         eprintln!("{error}");
                     }
+                    if let Err(error) = install_native_resize_corner_fix(hwnd.0) {
+                        eprintln!("{error}");
+                    }
                 }
             }
 
@@ -2557,6 +2737,53 @@ mod tests {
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 0, false), None);
         assert_eq!(full_client_area_result(WM_NCCALCSIZE, 1, true), None);
         assert_eq!(full_client_area_result(WM_NCDESTROY, 1, false), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_corner_hit_test_keeps_a_generous_diagonal_zone() {
+        let rect = RECT {
+            left: -1200,
+            top: -300,
+            right: -400,
+            bottom: 300,
+        };
+        let hit = |x, y| resize_corner_hit_test(rect, x, y, 18, 18);
+
+        assert_eq!(hit(-1199, -299), Some(HTTOPLEFT as LRESULT));
+        assert_eq!(hit(-1183, -299), Some(HTTOPLEFT as LRESULT));
+        assert_eq!(hit(-1199, -283), Some(HTTOPLEFT as LRESULT));
+        assert_eq!(hit(-401, -299), Some(HTTOPRIGHT as LRESULT));
+        assert_eq!(hit(-417, -299), Some(HTTOPRIGHT as LRESULT));
+        assert_eq!(hit(-1199, 299), Some(HTBOTTOMLEFT as LRESULT));
+        assert_eq!(hit(-401, 299), Some(HTBOTTOMRIGHT as LRESULT));
+
+        assert_eq!(hit(-1182, -299), None);
+        assert_eq!(hit(-1199, -282), None);
+        assert_eq!(hit(-800, 0), None);
+        assert_eq!(hit(-1201, -301), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_corner_zone_scales_with_window_dpi() {
+        assert_eq!(logical_pixels_at_dpi(18, 0), 18);
+        assert_eq!(logical_pixels_at_dpi(18, 96), 18);
+        assert_eq!(logical_pixels_at_dpi(18, 120), 23);
+        assert_eq!(logical_pixels_at_dpi(18, 144), 27);
+        assert_eq!(logical_pixels_at_dpi(18, 192), 36);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hit_test_coordinates_preserve_negative_monitor_positions() {
+        let x = -1198i16;
+        let y = -250i16;
+        let packed = ((y as u16 as u32) << 16) | x as u16 as u32;
+        let lparam = packed as LPARAM;
+
+        assert_eq!(signed_low_word(lparam), i32::from(x));
+        assert_eq!(signed_high_word(lparam), i32::from(y));
     }
 
     #[cfg(windows)]

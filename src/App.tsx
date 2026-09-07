@@ -79,6 +79,7 @@ import './App.css';
 const SCREEN_FIT_RATIO = 0.92;
 const MIN_WINDOW_WIDTH = 280;
 const MIN_WINDOW_HEIGHT = 240;
+const WINDOW_SHADOW_GUTTER = 10;
 
 interface FullscreenSnapshot extends ViewTransformState {
   currentFilePath: string | null;
@@ -680,8 +681,15 @@ function App() {
         }
 
         // Resize window to match image
-        const winW = Math.max(MIN_WINDOW_WIDTH, Math.round(naturalW * initialZoom));
-        const winH = Math.max(MIN_WINDOW_HEIGHT, Math.round(naturalH * initialZoom));
+        const windowShadowSpace = WINDOW_SHADOW_GUTTER * 2;
+        const winW = Math.max(
+          MIN_WINDOW_WIDTH,
+          Math.round(naturalW * initialZoom) + windowShadowSpace
+        );
+        const winH = Math.max(
+          MIN_WINDOW_HEIGHT,
+          Math.round(naturalH * initialZoom) + windowShadowSpace
+        );
 
         let isFullscreen = false;
         try {
@@ -2801,7 +2809,9 @@ function App() {
   return (
     <div
       ref={appContainerRef}
-      className={`app-container theme-${backgroundMode}`}
+      className={`app-container theme-${backgroundMode}${
+        !windowMode.isFullscreen && !windowMode.isMaximized ? ' window-framed' : ''
+      }`}
       style={{ cursor: getCursorStyle() }}
       onPointerDownCapture={handleResizePointerDownCapture}
       onPointerDown={handlePointerDown}
