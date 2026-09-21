@@ -1674,6 +1674,8 @@ html, body, #root {
 /* ===== Empty View ===== */
 
 .empty-view {
+  position: relative;
+  padding-bottom: 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1724,6 +1726,113 @@ html, body, #root {
   color: var(--text-faint);
   margin: 0;
   text-align: center;
+}
+
+.empty-utilities {
+  position: absolute;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.empty-utility-button,
+.shortcuts-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.empty-utility-button:hover,
+.shortcuts-close:hover {
+  color: var(--text-primary);
+  background: var(--interactive-hover);
+}
+
+.empty-utility-button:focus-visible,
+.shortcuts-close:focus-visible,
+.shortcuts-list:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.shortcuts-modal {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+}
+
+.shortcuts-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.shortcuts-heading .app-modal-title {
+  margin: 0;
+}
+
+.shortcuts-list {
+  min-height: 0;
+  padding-right: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-control) transparent;
+}
+
+.shortcuts-list::-webkit-scrollbar {
+  display: block;
+  width: 4px;
+}
+
+.shortcuts-list::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: var(--border-control);
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.shortcut-row dt {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.shortcut-row kbd {
+  color: var(--text-muted);
+  font: inherit;
+  white-space: nowrap;
+}
+
+.shortcut-row:last-child {
+  border-bottom: 0;
+}
+
+.status-chevron {
+  flex: 0 0 12px;
+  transition: transform 150ms ease;
+}
+
+.status-chevron.expanded {
+  transform: rotate(180deg);
 }
 
 @media (max-width: 360px) {

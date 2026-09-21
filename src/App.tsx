@@ -11,6 +11,8 @@ import ContextMenu from './components/ContextMenu';
 import OverlayControls from './components/OverlayControls';
 import ErrorView from './components/ErrorView';
 import SettingsModal from './components/SettingsModal';
+import ShortcutsModal from './components/ShortcutsModal';
+import { nextControlRegion, type ControlFocusRequest, type ControlRegion } from './controlFocus';
 import EmptyView from './components/EmptyView';
 import AboutModal from './components/AboutModal';
 import EmptyContextMenu, {
@@ -71,6 +73,7 @@ import type {
   FitMode,
   CustomOpenApp,
   CommandError,
+  CommandErrorKind,
   WindowBounds,
   SettingsDraft,
 } from './types';
@@ -110,6 +113,7 @@ interface FailedLoadState {
   filePath: string;
   imageList: string[];
   index: number;
+  kind: CommandErrorKind;
 }
 
 type ToastTone = 'neutral' | 'progress' | 'success' | 'warning' | 'error';
@@ -166,6 +170,9 @@ function App() {
   const [isRemovingCustomApp, setIsRemovingCustomApp] = useState(false);
   const [failedLoad, setFailedLoad] = useState<FailedLoadState | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [controlFocusRequest, setControlFocusRequest] = useState<ControlFocusRequest | null>(null);
+  const controlFocusSequenceRef = useRef(0);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
@@ -185,6 +192,7 @@ function App() {
       isCustomAppManagerOpen ||
       removeTarget ||
       isSettingsOpen ||
+      isShortcutsOpen ||
       isAboutOpen
   );
   const isInteractionBlocked = useCallback(
@@ -207,6 +215,20 @@ function App() {
 
   const appContainerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
+  const settingsOpenerRef = useRef<HTMLElement | null>(null);
+  const shortcutsOpenerRef = useRef<HTMLElement | null>(null);
+  const openShortcuts = useCallback(() => {
+    shortcutsOpenerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setIsShortcutsOpen(true);
+  }, []);
+  const openSettings = useCallback(() => {
+    settingsOpenerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setIsSettingsOpen(true);
+  }, []);
   const {
     contextMenu,
     contextMenuRef,
@@ -811,6 +833,7 @@ function App() {
         const failedIndex = index ?? state.currentIndex;
         setFailedLoad({
           filePath,
+          kind: isCommandError(err) ? err.kind : 'unknown',
           imageList: failedList.length > 0 ? failedList : [filePath],
           index: Math.max(0, failedIndex),
         });
@@ -823,6 +846,7 @@ function App() {
     },
     [
       getErrorMessage,
+      isCommandError,
       loadImage,
       preloadImages,
       calculateFitZoomForSize,
@@ -942,6 +966,7 @@ function App() {
           if (imageList.length === 0) {
             setFailedLoad({
               filePath: currentPath,
+              kind: 'file_not_found',
               imageList: [currentPath],
               index: 0,
             });
@@ -2363,7 +2388,25 @@ function App() {
 
   // ---- Keyboard shortcuts ----
 
+  const cycleControls = useCallback((backwards: boolean) => {
+    if (state.errorMessage) {
+      viewerRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const focused = document.activeElement?.closest<HTMLElement>('[data-control-region]')?.dataset.controlRegion;
+    const current: ControlRegion = focused === 'top-right' || focused === 'bottom' ? focused : 'viewer';
+    const next = nextControlRegion(current, Boolean(state.imageSrc), backwards);
+    if (next === 'viewer') {
+      viewerRef.current?.focus({ preventScroll: true });
+    } else {
+      setControlFocusRequest({ region: next, sequence: ++controlFocusSequenceRef.current });
+    }
+  }, [state.errorMessage, state.imageSrc]);
+
   useKeyboardShortcuts({
+    onOpenSettings: openSettings,
+    onOpenShortcuts: openShortcuts,
+    onCycleControls: cycleControls,
     onOpenImage: () => {
       void handleOpenImageDialog();
     },
@@ -2761,6 +2804,8 @@ function App() {
       return (
         <ErrorView
           message={state.errorMessage}
+          kind={failedLoad?.kind}
+          onOpenImage={() => void handleOpenImageDialog()}
           t={t}
           onClose={closeApp}
           onRetry={failedLoad ? retryFailedImage : undefined}
@@ -2778,7 +2823,8 @@ function App() {
     }
 
     if (!state.imageSrc) {
-      return <EmptyView t={t} onOpenImage={() => void handleOpenImageDialog()} />;
+      return <EmptyView t={t} onOpenImage={() => void handleOpenImageDialog()}
+        onOpenSettings={openSettings} onOpenShortcuts={openShortcuts} />;
     }
 
     const transform = `
@@ -2860,6 +2906,7 @@ function App() {
 
       {!state.errorMessage && (
         <OverlayControls
+          focusRequest={controlFocusRequest}
           activeRegion={overlay.activeRegion}
           feedbackDurationMs={overlayHideDelayMs}
           isAlwaysOnTop={state.isAlwaysOnTop}
@@ -2887,7 +2934,7 @@ function App() {
           onFitScreen={fitToScreen}
           onToggleAlwaysOnTop={toggleAlwaysOnTop}
           onToggleBackgroundMode={toggleBackgroundMode}
-          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onRotate={rotate}
         />
       )}
@@ -3189,6 +3236,11 @@ function App() {
         />
       )}
 
+      {isShortcutsOpen && (
+        <ShortcutsModal t={t} onClose={() => setIsShortcutsOpen(false)}
+          returnFocusRef={shortcutsOpenerRef} fallbackFocusRef={viewerRef} />
+      )}
+
       {isSettingsOpen && (
         <SettingsModal
           currentVersion={packageInfo.version}
@@ -3204,6 +3256,8 @@ function App() {
           onOpenRelease={openReleasePage}
           onOpenDefaultAppsSettings={openDefaultAppsSettings}
           onCancel={() => setIsSettingsOpen(false)}
+          returnFocusRef={settingsOpenerRef}
+          fallbackFocusRef={viewerRef}
           onSave={saveViewerSettings}
         />
       )}

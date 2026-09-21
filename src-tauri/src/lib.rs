@@ -56,8 +56,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 /// Supported image extensions
 const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "heic", "heif",
-    "jxl", "psd", "tga", "dds", "pbm", "pgm", "pnm", "ppm", "pam", "raw", "cr2", "nef", "arw",
+    "jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif", "jxl", "psd", "tga",
+    "dds", "pbm", "pgm", "pnm", "ppm", "pam",
 ];
 
 const UNSUPPORTED_HEIC_EXTENSIONS: &[&str] = &["heic", "heif"];
@@ -1480,10 +1480,12 @@ fn read_image_with_store(
     retained_images: &RetainedImageStore,
 ) -> Result<ImageData, CommandError> {
     if !is_supported_image(original_path) {
-        return Err(command_error(
-            "unsupported_format",
-            "Unsupported file format.",
-        ));
+        let extension = original_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        return Err(unsupported_format_error(&extension));
     }
 
     let existing_retained = retained_images.resolve(original_path);
@@ -2638,6 +2640,10 @@ mod tests {
         let dir = temp_dir("folder-scan");
         fs::write(dir.join("photo10.png"), b"10").unwrap();
         fs::write(dir.join("photo2.jpg"), b"2").unwrap();
+        fs::write(dir.join("photo3.PNG"), b"3").unwrap();
+        for extension in ["HEIC", "heif", "RAW", "cr2", "nef", "arw"] {
+            fs::write(dir.join(format!("unsupported.{extension}")), b"skip").unwrap();
+        }
         fs::write(dir.join("notes.txt"), b"skip").unwrap();
         fs::create_dir(dir.join("photo1.png")).unwrap();
 
@@ -2651,6 +2657,7 @@ mod tests {
             names,
             vec![
                 std::ffi::OsStr::new("photo2.jpg"),
+                std::ffi::OsStr::new("photo3.PNG"),
                 std::ffi::OsStr::new("photo10.png")
             ]
         );
@@ -2968,13 +2975,20 @@ mod tests {
     #[test]
     fn recognized_unsupported_image_returns_specific_error() {
         let dir = temp_dir("unsupported");
-        let path = dir.join("sample.heic");
-        fs::write(&path, b"unsupported").unwrap();
         let retained_images = RetainedImageStore::new_in(dir.join("retained"));
-
-        let error = read_image_with_store(&path, false, &retained_images).unwrap_err();
-
-        assert_eq!(error.kind, "unsupported_heic");
+        for (extension, expected_kind) in [
+            ("HEIC", "unsupported_heic"),
+            ("heif", "unsupported_heic"),
+            ("RAW", "unsupported_raw"),
+            ("cr2", "unsupported_raw"),
+            ("nef", "unsupported_raw"),
+            ("arw", "unsupported_raw"),
+        ] {
+            let path = dir.join(format!("sample.{extension}"));
+            fs::write(&path, b"unsupported").unwrap();
+            let error = read_image_with_store(&path, false, &retained_images).unwrap_err();
+            assert_eq!(error.kind, expected_kind);
+        }
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -22,11 +22,21 @@ interface KeyboardShortcutsProps {
   onPrint: () => void;
   onShowProperties: () => void;
   onReload: () => void;
+  onOpenSettings: () => void;
+  onOpenShortcuts: () => void;
+  onCycleControls: (backwards: boolean) => void;
   isEnabled?: () => boolean;
 }
 
-function isInteractiveTarget(target: EventTarget | null): boolean {
+function isInteractiveTarget(target: EventTarget | null, key: string): boolean {
   if (!(target instanceof Element)) return false;
+
+  if (target.closest('input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"]')) {
+    return true;
+  }
+  if (target.closest('[data-viewer-controls] button')) {
+    return ['Enter', ' ', 'Tab'].includes(key);
+  }
 
   return Boolean(
     target.closest(
@@ -98,6 +108,23 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
         return;
       }
 
+      if (e.defaultPrevented) return;
+      if (e.key === 'F6' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (!e.repeat) p.onCycleControls(e.shiftKey);
+        return;
+      }
+      if (e.key === 'F1' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (!e.repeat) p.onOpenShortcuts();
+        return;
+      }
+      if (e.key === ',' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (!e.repeat) p.onOpenSettings();
+        return;
+      }
+
       // Fullscreen keys are global even when a toolbar control has focus. Do
       // not let key-repeat exit fullscreen and then immediately close the app.
       if (e.key === 'Escape' || e.key === 'F11') {
@@ -110,7 +137,7 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
 
       // Let focused controls keep their native keyboard behavior. In
       // particular, Space must activate a button instead of navigating.
-      if (isInteractiveTarget(e.target)) {
+      if (isInteractiveTarget(e.target, e.key)) {
         return;
       }
 

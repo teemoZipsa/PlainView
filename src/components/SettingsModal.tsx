@@ -7,6 +7,7 @@ import type {
 } from '../types';
 import type { UpdateCheckResult } from '../updateCheck';
 import { handleDialogKeyDown } from '../modalKeyboard';
+import { useDialogFocus, type DialogFocusOptions } from '../hooks/useDialogFocus';
 
 type UpdateState =
   | { kind: 'idle' }
@@ -16,7 +17,7 @@ type UpdateState =
   | { kind: 'available'; result: UpdateCheckResult }
   | { kind: 'error' };
 
-interface SettingsModalProps {
+interface SettingsModalProps extends DialogFocusOptions {
   initialSettings: SettingsDraft;
   currentVersion: string;
   t: TFunction;
@@ -36,7 +37,10 @@ export default function SettingsModal({
   onCheckForUpdates,
   onOpenRelease,
   onOpenDefaultAppsSettings,
+  returnFocusRef,
+  fallbackFocusRef,
 }: SettingsModalProps) {
+  const dialogRef = useDialogFocus({ returnFocusRef, fallbackFocusRef });
   const [draft, setDraft] = useState(initialSettings);
   const [updateState, setUpdateState] = useState<UpdateState>({ kind: 'idle' });
   const [isSaving, setIsSaving] = useState(false);
@@ -84,13 +88,13 @@ export default function SettingsModal({
   return (
     <div className="modal-backdrop" onMouseDown={requestCancel}>
       <div
+        ref={dialogRef}
         className="app-modal settings-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
         aria-busy={isSaving}
         tabIndex={-1}
-        autoFocus
         onMouseDown={(event) => event.stopPropagation()}
         onWheel={(event) => event.stopPropagation()}
         onKeyDown={(event) =>

@@ -27,6 +27,23 @@ afterEach(async () => {
 });
 
 describe('ErrorView', () => {
+  it.each(['unsupported_heic', 'unsupported_raw', 'unsupported_format', 'avif_unsupported'] as const)(
+    'offers image opening instead of retry for %s', async (kind) => {
+      const onOpenImage = vi.fn();
+      const onRetry = vi.fn();
+      await act(async () => root.render(
+        <ErrorView message="unsupported" kind={kind} t={t} onClose={vi.fn()}
+          onRetry={onRetry} onOpenImage={onOpenImage} />
+      ));
+      const primary = container.querySelector<HTMLButtonElement>('.primary');
+      expect(primary?.textContent).toBe('empty.openImage');
+      expect(container.textContent).not.toContain('button.retry');
+      await act(async () => primary?.click());
+      expect(onOpenImage).toHaveBeenCalledTimes(1);
+      expect(onRetry).not.toHaveBeenCalled();
+    }
+  );
+
   it('offers recovery actions when callbacks are available', async () => {
     const onRetry = vi.fn();
     const onNext = vi.fn();

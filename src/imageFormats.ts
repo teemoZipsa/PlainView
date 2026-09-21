@@ -9,8 +9,6 @@ export const SUPPORTED_IMAGE_EXTENSIONS = [
   'tiff',
   'ico',
   'avif',
-  'heic',
-  'heif',
   'jxl',
   'psd',
   'tga',
@@ -20,10 +18,11 @@ export const SUPPORTED_IMAGE_EXTENSIONS = [
   'pnm',
   'ppm',
   'pam',
-  'raw',
-  'cr2',
-  'nef',
-  'arw',
+] as const;
+
+// Recognized for direct-open error messages, not advertised as viewable files.
+export const RECOGNIZED_UNSUPPORTED_IMAGE_EXTENSIONS = [
+  'heic', 'heif', 'raw', 'cr2', 'nef', 'arw',
 ] as const;
 
 export const FILE_SOURCE_IMAGE_EXTENSIONS = [

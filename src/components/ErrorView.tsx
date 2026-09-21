@@ -1,23 +1,31 @@
 import React from 'react';
 import type { TFunction } from '../i18n';
+import type { CommandErrorKind } from '../types';
 
 interface ErrorViewProps {
   message: string;
+  kind?: CommandErrorKind;
   t: TFunction;
   onClose: () => void;
   onRetry?: () => void;
   onNext?: () => void;
   onReveal?: () => void;
+  onOpenImage?: () => void;
 }
 
 const ErrorView: React.FC<ErrorViewProps> = ({
   message,
+  kind,
   t,
   onClose,
   onRetry,
   onNext,
   onReveal,
+  onOpenImage,
 }) => {
+  const unsupported = kind === 'unsupported_format' || kind === 'unsupported_heic' ||
+    kind === 'unsupported_raw' || kind === 'avif_unsupported';
+  const canRetry = Boolean(onRetry) && !unsupported;
   return (
     <div className="error-view" onMouseDown={(event) => event.stopPropagation()}>
       <div className="error-icon">
@@ -30,9 +38,14 @@ const ErrorView: React.FC<ErrorViewProps> = ({
       </div>
       <p className="error-message">{message}</p>
       <div className="error-actions">
-        {onRetry && (
+        {canRetry && (
           <button type="button" className="error-action-btn primary" onClick={onRetry}>
             {t('button.retry')}
+          </button>
+        )}
+        {onOpenImage && (
+          <button type="button" className={`error-action-btn${canRetry ? '' : ' primary'}`} onClick={onOpenImage}>
+            {t('empty.openImage')}
           </button>
         )}
         {onNext && (

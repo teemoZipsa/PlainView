@@ -50,6 +50,35 @@ afterEach(async () => {
 });
 
 describe('SettingsModal', () => {
+  it('restores the opener, or the viewer when the opener was removed', async () => {
+    const opener = document.createElement('button');
+    const fallback = document.createElement('div');
+    fallback.tabIndex = -1;
+    document.body.append(opener, fallback);
+    const returnFocusRef = { current: opener as HTMLElement | null };
+    const fallbackFocusRef = { current: fallback as HTMLElement | null };
+    const render = async () => act(async () => {
+      root.render(<SettingsModal {...updateProps()} initialSettings={initialSettings} t={t}
+        onCancel={vi.fn()} onSave={vi.fn(async () => true)}
+        returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef} />);
+    });
+    try {
+      opener.focus();
+      await render();
+      await act(async () => root.render(null));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      expect(document.activeElement).toBe(opener);
+      await render();
+      opener.remove();
+      await act(async () => root.render(null));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+      expect(document.activeElement).toBe(fallback);
+    } finally {
+      opener.remove();
+      fallback.remove();
+    }
+  });
+
   it('returns the edited viewer preferences', async () => {
     const onSave = vi.fn(async () => true);
 
@@ -147,9 +176,8 @@ describe('SettingsModal', () => {
     });
 
     await act(async () => {
-      container
-        .querySelector<HTMLElement>('.settings-modal')
-        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(document.activeElement).toBe(container.querySelector('#settings-language'));
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
 
     expect(onCancel).toHaveBeenCalledTimes(1);

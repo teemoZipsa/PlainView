@@ -270,7 +270,7 @@ export default function ContextMenu({
             {t('menu.copyPath')}
           </button>
           <div className="context-menu-divider" role="separator" />
-          <button className="context-menu-item" type="button" role="menuitem" onClick={onSaveAs}>
+          <button className="context-menu-item" type="button" role="menuitem" title={t('menu.saveAsTitle')} onClick={onSaveAs}>
             <span>{t('menu.saveAs')}</span>
             <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+S</kbd>
           </button>
@@ -303,7 +303,7 @@ export default function ContextMenu({
         </div>
       </div>
 
-      <button className="context-menu-item" type="button" role="menuitem" onClick={onPrint}>
+      <button className="context-menu-item" type="button" role="menuitem" title={t('menu.printTitle')} onClick={onPrint}>
         <span>{t('menu.print')}</span>
         <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+P</kbd>
       </button>

@@ -22,7 +22,7 @@ PAM support focuses on standard tuple types.
 DDS support focuses on DXT1/BC1, DXT3/BC2, and DXT5/BC3 families.
 BC4, BC5, BC6H, BC7, other DXGI variants, and general uncompressed DDS files are not supported.
 
-HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current version shows a clear unsupported-format error when opening them.
+HEIC, HEIF, RAW, CR2, NEF, and ARW are excluded from the file picker, folder navigation, and new installer associations. Opening them directly by dropping a file or passing a launch argument shows a specific unsupported-format message and an Open image action.
 
 ## Keyboard Shortcuts
 
@@ -31,6 +31,9 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 | `Esc` | Exit fullscreen / close in windowed mode |
 | `F11` | Toggle fullscreen |
 | `Ctrl+O` | Open an image |
+| `Ctrl+,` | Settings |
+| `F1` | Keyboard shortcuts |
+| `F6` / `Shift+F6` | Cycle focus between the image and upper/lower controls |
 | `Left Arrow` / `Backspace` | Previous image |
 | `Right Arrow` / `Space` | Next image |
 | `Home` / `End` | First image / last image |
@@ -39,11 +42,11 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW extensions are recognized, but the current ve
 | `0` | Original size |
 | `F` | Fit to screen |
 | `T` | Toggle always on top |
-| `R` | Rotate 90 degrees clockwise |
-| `Ctrl+C` | Copy image and file formats |
-| `Ctrl+S` | Save as |
+| `R` | Rotate the view 90 degrees clockwise |
+| `Ctrl+C` | Copy original image and file formats |
+| `Ctrl+S` | Save the original file as |
 | `Ctrl+M` | Move to another folder |
-| `Ctrl+P` | Print |
+| `Ctrl+P` | Print the current orientation |
 | `F2` | Rename |
 | `Alt+Enter` | File properties |
 | `Delete` | Move to Recycle Bin |
@@ -116,6 +119,7 @@ npm run release:windows
 - Windows requires users to confirm default-app choices; PlainView can open the relevant Windows settings page directly.
 - Update checks contact GitHub only when requested; installation remains a user-initiated download.
 - PlainView is view-only and does not include image editing tools.
+- View rotation does not change copied or saved originals. Printing uses the current orientation.
 - GIF support is limited to click-to-pause and click-to-resume. Frame-by-frame navigation is not supported.
 - Formats the WebView cannot render directly are converted to PNG and loaded as base64 data, with a 5-image LRU cache for converted results.
 

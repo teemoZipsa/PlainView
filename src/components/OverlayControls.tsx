@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { ControlFocusRequest } from '../controlFocus';
 import type { OverlayRegion } from '../hooks/useOverlayVisibility';
 import type { TFunction } from '../i18n';
 import type { BackgroundMode } from '../types';
@@ -13,6 +14,7 @@ interface ImageInfo {
 }
 
 interface OverlayControlsProps {
+  focusRequest?: ControlFocusRequest | null;
   activeRegion: OverlayRegion;
   feedbackDurationMs: number;
   isAlwaysOnTop: boolean;
@@ -41,7 +43,8 @@ interface OverlayControlsProps {
 type FeedbackKind = 'zoom' | 'image';
 
 const OverlayControls: React.FC<OverlayControlsProps> = ({
-  activeRegion,
+  focusRequest,
+  activeRegion: pointerRegion,
   feedbackDurationMs,
   isAlwaysOnTop,
   backgroundMode,
@@ -66,7 +69,12 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   onRotate,
 }) => {
   const hasImage = Boolean(imageInfo.filePath) && totalImages > 0;
+  const [focusedRegion, setFocusedRegion] = useState<OverlayRegion>('none');
+  const pointerFocusRef = useRef(false);
+  const activeRegion = focusedRegion !== 'none' ? focusedRegion : pointerRegion;
   const statusRef = useRef<HTMLButtonElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const lastFocusSequenceRef = useRef(0);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const editSessionRef = useRef(false);
   const initialZoomDraftRef = useRef('');
@@ -80,6 +88,25 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   const [feedbackKind, setFeedbackKind] = useState<FeedbackKind | null>(null);
   const [isInfoVisible, setIsInfoVisible] = useState(false);
   const [infoPopoverPosition, setInfoPopoverPosition] = useState({ left: 0, top: 0 });
+
+  useLayoutEffect(() => {
+    if (!focusRequest || focusRequest.sequence === lastFocusSequenceRef.current) return;
+    if (focusRequest.region === 'bottom' && !hasImage) return;
+    pointerFocusRef.current = false;
+    if (focusedRegion !== focusRequest.region) {
+      setFocusedRegion(focusRequest.region);
+      return;
+    }
+    if (focusRequest.region === 'bottom' && !isBottomExpanded) {
+      setIsBottomExpanded(true);
+      return;
+    }
+    const target = focusRequest.region === 'top-right'
+      ? moreButtonRef.current
+      : bottomRef.current?.querySelector<HTMLButtonElement>('.overlay-bottom-row button');
+    target?.focus({ preventScroll: true });
+    lastFocusSequenceRef.current = focusRequest.sequence;
+  }, [focusRequest, focusedRegion, hasImage, isBottomExpanded]);
 
   const clearFeedbackTimer = useCallback(() => {
     if (!feedbackTimerRef.current) return;
@@ -131,6 +158,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
 
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       setIsMoreOpen(false);
@@ -232,9 +260,34 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
     setIsInfoVisible(true);
   };
 
+  const focusRegionFor = (target: EventTarget | null): OverlayRegion => {
+    if (!(target instanceof Element)) return 'none';
+    return (target.closest<HTMLElement>('[data-control-region]')?.dataset.controlRegion as OverlayRegion) ?? 'none';
+  };
+
   return (
-    <div className="overlay-container">
-      <div className={`overlay-top-right ${activeRegion === 'top-right' ? 'is-visible' : ''}`}>
+    <div
+      className="overlay-container"
+      data-viewer-controls
+      onPointerDownCapture={() => {
+        pointerFocusRef.current = true;
+        setFocusedRegion('none');
+      }}
+      onFocusCapture={(event) => {
+        if (!pointerFocusRef.current) setFocusedRegion(focusRegionFor(event.target));
+      }}
+      onKeyDownCapture={(event) => {
+        pointerFocusRef.current = false;
+        setFocusedRegion(focusRegionFor(event.target));
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          pointerFocusRef.current = false;
+          setFocusedRegion('none');
+        }
+      }}
+    >
+      <div data-control-region="top-right" className={`overlay-top-right ${activeRegion === 'top-right' ? 'is-visible' : ''}`}>
         <div className="overlay-window-controls">
           <button
             ref={moreButtonRef}
@@ -408,6 +461,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             className={`overlay-btn nav-btn nav-left ${
               activeRegion === 'left' ? 'is-visible' : ''
             }`}
+            data-control-region="left"
             onClick={(event) => handleButtonClick(event, onPrevImage)}
             title={t('overlay.previousTitle')}
             aria-label={t('overlay.previousAria')}
@@ -432,6 +486,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             className={`overlay-btn nav-btn nav-right ${
               activeRegion === 'right' ? 'is-visible' : ''
             }`}
+            data-control-region="right"
             onClick={(event) => handleButtonClick(event, onNextImage)}
             title={t('overlay.nextTitle')}
             aria-label={t('overlay.nextAria')}
@@ -456,6 +511,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
 
       {hasImage && (
         <div
+          ref={bottomRef}
+          data-control-region="bottom"
           className={`overlay-bottom-center ${
             activeRegion === 'bottom' ? 'is-visible' : ''
           } ${isBottomExpanded ? 'is-expanded' : ''}`}
@@ -626,6 +683,10 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
                 </span>
               </>
             )}
+            <svg className={`status-chevron${isBottomExpanded ? ' expanded' : ''}`} width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+              <path d="m6 15 6-6 6 6" />
+            </svg>
           </button>
         </div>
       )}

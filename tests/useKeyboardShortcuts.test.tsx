@@ -30,6 +30,9 @@ const callbacks = () => ({
   onPrint: vi.fn(),
   onShowProperties: vi.fn(),
   onReload: vi.fn(),
+  onOpenSettings: vi.fn(),
+  onOpenShortcuts: vi.fn(),
+  onCycleControls: vi.fn(),
 });
 
 type ShortcutCallbacks = ReturnType<typeof callbacks>;
@@ -81,6 +84,38 @@ function press(key: string, options: KeyboardEventInit = {}) {
 }
 
 describe('useKeyboardShortcuts', () => {
+  it('keeps viewer shortcuts usable after focusing a toolbar button', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+    const toolbar = document.createElement('div');
+    toolbar.dataset.viewerControls = '';
+    const button = document.createElement('button');
+    toolbar.append(button);
+    container.append(toolbar);
+    button.focus();
+    for (const [key, ctrlKey] of [['ArrowRight', false], ['+', false], ['c', true]] as const) {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey, bubbles: true }));
+    }
+    expect(handlers.onNextImage).toHaveBeenCalledTimes(1);
+    expect(handlers.onZoomIn).toHaveBeenCalledTimes(1);
+    expect(handlers.onCopy).toHaveBeenCalledTimes(1);
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect(handlers.onNextImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not navigate while editing a toolbar input', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+    const toolbar = document.createElement('div');
+    toolbar.dataset.viewerControls = '';
+    const input = document.createElement('input');
+    toolbar.append(input);
+    container.append(toolbar);
+    input.focus();
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(handlers.onNextImage).not.toHaveBeenCalled();
+  });
+
   it('routes Escape through the viewer escape contract', async () => {
     const handlers = callbacks();
     await renderShortcuts(handlers);

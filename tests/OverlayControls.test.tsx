@@ -127,6 +127,21 @@ describe('OverlayControls', () => {
     expect(container.querySelector('.nav-right')?.classList.contains('is-visible')).toBe(true);
   });
 
+  it('keeps keyboard-focused controls visible after the pointer leaves', async () => {
+    const render = async (activeRegion: OverlayProps['activeRegion']) => act(async () => {
+      root.render(<OverlayControls {...createProps({ ...imageProps, activeRegion })} />);
+    });
+    await render('top-right');
+    await act(async () => container.querySelector<HTMLButtonElement>('.more-btn')?.focus());
+    await render('none');
+    expect(container.querySelector('.overlay-top-right')?.classList.contains('is-visible')).toBe(true);
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    await act(async () => outside.focus());
+    expect(container.querySelector('.overlay-top-right')?.classList.contains('is-visible')).toBe(false);
+    outside.remove();
+  });
+
   it('keeps the bottom HUD compact until its status is clicked', async () => {
     const onZoomOut = vi.fn();
 
