@@ -175,6 +175,8 @@ function App() {
   const controlFocusSequenceRef = useRef(0);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [showTransitionLoading, setShowTransitionLoading] = useState(false);
+  const [showViewerHint, setShowViewerHint] = useState(false);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
   const [overlayHideDelayMs, setOverlayHideDelayMs] = useState(2000);
   const [gifPause, setGifPause] = useState<GifPauseState | null>(null);
@@ -255,6 +257,9 @@ function App() {
   const dragModeRef = useRef<DragMode>('none');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewerHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewerHintCheckedRef = useRef(false);
   const fullscreenSnapshotRef = useRef<FullscreenSnapshot | null>(null);
   const fullscreenQueueRef = useRef(new SerializedTaskQueue());
   const isCopyingRef = useRef(false);
@@ -357,6 +362,30 @@ function App() {
       setToast(null);
       toastTimerRef.current = null;
     }, duration);
+  }, []);
+
+  const clearTransitionLoading = useCallback(() => {
+    if (transitionLoadingTimerRef.current) clearTimeout(transitionLoadingTimerRef.current);
+    transitionLoadingTimerRef.current = null;
+    setShowTransitionLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!state.currentFilePath || state.isLoading || state.errorMessage || viewerHintCheckedRef.current) return;
+    viewerHintCheckedRef.current = true;
+    try {
+      if (localStorage.getItem('plainview.viewerHintSeen') === '1') return;
+      localStorage.setItem('plainview.viewerHintSeen', '1');
+    } catch {
+      // The hint remains one-time for this session when storage is unavailable.
+    }
+    setShowViewerHint(true);
+    viewerHintTimerRef.current = setTimeout(() => setShowViewerHint(false), 2800);
+  }, [state.currentFilePath, state.isLoading, state.errorMessage]);
+
+  useEffect(() => () => {
+    if (transitionLoadingTimerRef.current) clearTimeout(transitionLoadingTimerRef.current);
+    if (viewerHintTimerRef.current) clearTimeout(viewerHintTimerRef.current);
   }, []);
 
   const updateGifPause = useCallback((nextPause: GifPauseState | null) => {
@@ -671,15 +700,19 @@ function App() {
       stopPanning();
       hasDraggedRef.current = false;
       setFailedLoad(null);
-      updateGifPause(null);
       gifClickSequenceRef.current = null;
+
+      clearTransitionLoading();
+      if (viewerStateRef.current.imageSrc) {
+        transitionLoadingTimerRef.current = setTimeout(() => {
+          if (imageIntentRef.current.isCurrent(myRequestId)) setShowTransitionLoading(true);
+        }, 250);
+      }
 
       setState((prev) => ({
         ...prev,
         isLoading: true,
         errorMessage: null,
-        panOffset: { x: 0, y: 0 },
-        rotation: 0,
       }));
 
       try {
@@ -797,6 +830,8 @@ function App() {
                 ? 'fit'
                 : 'auto';
 
+        clearTransitionLoading();
+        updateGifPause(null);
         setState((prev) => ({
           ...prev,
           currentFilePath: filePath,
@@ -828,6 +863,8 @@ function App() {
       } catch (err: unknown) {
         // Stale request guard on error path too
         if (!imageIntentRef.current.isCurrent(myRequestId)) return;
+        clearTransitionLoading();
+        updateGifPause(null);
 
         const failedList = imageList ?? state.imageList;
         const failedIndex = index ?? state.currentIndex;
@@ -854,6 +891,7 @@ function App() {
       state.currentIndex,
       stopPanning,
       updateGifPause,
+      clearTransitionLoading,
     ]
   );
 
@@ -1076,13 +1114,17 @@ function App() {
   }, [scaleZoom]);
 
   const setOriginalSize = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      zoom: 1,
-      fitMode: 'original' as const,
-      panOffset: { x: 0, y: 0 },
-    }));
-  }, []);
+    setState((prev) => {
+      const transition = getZoomTransition(
+        prev.zoom,
+        1,
+        prev.panOffset,
+        (zoom, panOffset) =>
+          clampPanOffset(prev.naturalSize, zoom, prev.rotation, panOffset)
+      );
+      return { ...prev, ...transition, fitMode: 'original' as const };
+    });
+  }, [clampPanOffset]);
 
   const fitToScreen = useCallback(() => {
     setState((prev) => {
@@ -2345,6 +2387,7 @@ function App() {
 
   const handleViewerDoubleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
+      if (state.isLoading) return;
       event.preventDefault();
       event.stopPropagation();
 
@@ -2356,7 +2399,7 @@ function App() {
 
       void runFullscreenIntent('toggle');
     },
-    [runFullscreenIntent, state.currentFilePath, updateGifPause]
+    [runFullscreenIntent, state.currentFilePath, state.isLoading, updateGifPause]
   );
 
   const handleEscape = useCallback(async () => {
@@ -2792,7 +2835,7 @@ function App() {
   // ---- Render ----
 
   const renderImage = () => {
-    if (state.isLoading) {
+    if (state.isLoading && !state.imageSrc) {
       return (
         <div className="loading-view">
           <div className="loading-spinner" />
@@ -2906,6 +2949,7 @@ function App() {
 
       {!state.errorMessage && (
         <OverlayControls
+          isLoading={state.isLoading}
           focusRequest={controlFocusRequest}
           activeRegion={overlay.activeRegion}
           feedbackDurationMs={overlayHideDelayMs}
@@ -2937,6 +2981,16 @@ function App() {
           onOpenSettings={openSettings}
           onRotate={rotate}
         />
+      )}
+
+      {state.isLoading && state.imageSrc && showTransitionLoading && (
+        <div className="transition-loading-indicator" role="status" aria-label={t('viewer.loading')}>
+          <div className="loading-spinner" aria-hidden="true" />
+        </div>
+      )}
+
+      {showViewerHint && !state.isLoading && !state.errorMessage && (
+        <div className="viewer-first-hint" role="status">{t('viewer.firstHint')}</div>
       )}
 
       {contextMenu &&

@@ -14,6 +14,13 @@ describe('getOverlayRegion', () => {
     expect(getOverlayRegion(960, 300, width, height)).toBe('right');
   });
 
+  it('keeps controls hidden while inspecting image corners or distant edges', () => {
+    expect(getOverlayRegion(40, 100, width, height)).toBe('none');
+    expect(getOverlayRegion(960, 120, width, height)).toBe('none');
+    expect(getOverlayRegion(800, 80, width, height)).toBe('none');
+    expect(getOverlayRegion(500, 570, width, height)).toBe('none');
+  });
+
   it('gives the top-right and bottom-center HUDs priority in their hot zones', () => {
     expect(getOverlayRegion(960, 40, width, height)).toBe('top-right');
     expect(getOverlayRegion(500, 660, width, height)).toBe('bottom');

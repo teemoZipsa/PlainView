@@ -3,7 +3,7 @@
 // limits so zoom-out never turns into an unexpected zoom-in.
 export const MIN_ZOOM = 0.001;
 export const MAX_ZOOM = 10;
-export const ZOOM_FACTOR = 1.15;
+export const ZOOM_FACTOR = 1.2;
 export const ORIGINAL_ZOOM = 1;
 
 const ORIGINAL_ZOOM_EPSILON = 1e-9;
@@ -60,12 +60,7 @@ export const getWheelZoomTarget = (
         ? deltaY * 100
         : deltaY;
   const steps = Math.max(-4, Math.min(4, pixelDelta / 100));
-  const candidate = normalizedCurrent * Math.pow(ZOOM_FACTOR, -steps);
-  const crossesOriginal =
-    (normalizedCurrent < ORIGINAL_ZOOM && candidate > ORIGINAL_ZOOM) ||
-    (normalizedCurrent > ORIGINAL_ZOOM && candidate < ORIGINAL_ZOOM);
-
-  return clampZoom(crossesOriginal ? ORIGINAL_ZOOM : candidate);
+  return clampZoom(normalizedCurrent * Math.pow(ZOOM_FACTOR, -steps));
 };
 
 export const formatZoomPercent = (zoom: number) => {
@@ -81,10 +76,7 @@ export const formatZoomPercent = (zoom: number) => {
   return rounded.toFixed(2).replace(/\.?0+$/, '');
 };
 
-/**
- * Move through the image's actual 100% scale as a stable zoom stop. Using
- * reciprocal factors keeps zoom-in followed by zoom-out reversible.
- */
+/** Use reciprocal factors so zoom-in followed by zoom-out is reversible. */
 export const getNextZoom = (
   currentZoom: number,
   direction: ZoomDirection
@@ -100,18 +92,10 @@ export const getNextZoom = (
       ? normalizedCurrent * ZOOM_FACTOR
       : normalizedCurrent / ZOOM_FACTOR;
 
-  const crossesOriginal =
-    (normalizedCurrent < ORIGINAL_ZOOM && candidate > ORIGINAL_ZOOM) ||
-    (normalizedCurrent > ORIGINAL_ZOOM && candidate < ORIGINAL_ZOOM);
-
-  return clampZoom(crossesOriginal ? ORIGINAL_ZOOM : candidate);
+  return clampZoom(candidate);
 };
 
-/**
- * Resolve an interactive zoom change while keeping the image point beneath
- * the supplied anchor stationary. Explicit 1:1 reset/recentering is handled
- * separately by the viewer command that owns that behavior.
- */
+/** Keep the image point beneath the supplied anchor stationary when possible. */
 export const getZoomTransition = (
   currentZoom: number,
   targetZoom: number,

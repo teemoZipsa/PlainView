@@ -2,11 +2,12 @@ import { useCallback, useState } from 'react';
 
 export type OverlayRegion = 'none' | 'left' | 'right' | 'bottom' | 'top-right';
 
-const NAV_EDGE_WIDTH = 72;
-const TOP_RIGHT_HEIGHT = 132;
-const TOP_RIGHT_WIDTH = 224;
-const BOTTOM_HEIGHT = 112;
-const BOTTOM_MAX_WIDTH = 520;
+const NAV_EDGE_WIDTH = 56;
+const NAV_CENTER_MAX_HEIGHT = 220;
+const TOP_RIGHT_HEIGHT = 104;
+const TOP_RIGHT_WIDTH = 144;
+const BOTTOM_HEIGHT = 100;
+const BOTTOM_MAX_WIDTH = 360;
 
 export function getOverlayRegion(
   clientX: number,
@@ -41,11 +42,13 @@ export function getOverlayRegion(
     return 'bottom';
   }
 
-  if (clientX <= Math.min(NAV_EDGE_WIDTH, viewportWidth / 2)) {
+  const navHeight = Math.min(NAV_CENTER_MAX_HEIGHT, viewportHeight * 0.5);
+  const isNearNav = Math.abs(clientY - viewportHeight / 2) <= navHeight / 2;
+  if (isNearNav && clientX <= Math.min(NAV_EDGE_WIDTH, viewportWidth / 2)) {
     return 'left';
   }
 
-  if (clientX >= viewportWidth - Math.min(NAV_EDGE_WIDTH, viewportWidth / 2)) {
+  if (isNearNav && clientX >= viewportWidth - Math.min(NAV_EDGE_WIDTH, viewportWidth / 2)) {
     return 'right';
   }
 

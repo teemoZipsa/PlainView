@@ -16,6 +16,7 @@ function createProps(overrides: Partial<OverlayProps> = {}): OverlayProps {
   const noop = vi.fn();
 
   return {
+    isLoading: false,
     activeRegion: 'none',
     feedbackDurationMs: 2000,
     isAlwaysOnTop: false,

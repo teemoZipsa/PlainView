@@ -14,6 +14,7 @@ interface ImageInfo {
 }
 
 interface OverlayControlsProps {
+  isLoading: boolean;
   focusRequest?: ControlFocusRequest | null;
   activeRegion: OverlayRegion;
   feedbackDurationMs: number;
@@ -43,6 +44,7 @@ interface OverlayControlsProps {
 type FeedbackKind = 'zoom' | 'image';
 
 const OverlayControls: React.FC<OverlayControlsProps> = ({
+  isLoading,
   focusRequest,
   activeRegion: pointerRegion,
   feedbackDurationMs,
@@ -137,7 +139,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   }, [activeRegion, hasImage, showFeedback, zoom]);
 
   useEffect(() => {
-    if (previousPathRef.current !== imageInfo.filePath && hasImage) {
+    if (previousPathRef.current && previousPathRef.current !== imageInfo.filePath && hasImage) {
       showFeedback('image');
     }
     previousPathRef.current = imageInfo.filePath;
@@ -268,6 +270,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   return (
     <div
       className="overlay-container"
+      hidden={isLoading}
       data-viewer-controls
       onPointerDownCapture={() => {
         pointerFocusRef.current = true;

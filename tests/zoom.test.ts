@@ -13,7 +13,7 @@ import {
 test('one zoom-in and one zoom-out return exactly to 100%', () => {
   const enlarged = getNextZoom(1, 'in');
 
-  assert.equal(enlarged, 1.15);
+  assert.equal(enlarged, 1.2);
   assert.equal(getNextZoom(enlarged, 'out'), 1);
 });
 
@@ -23,9 +23,9 @@ test('one zoom-out and one zoom-in return exactly to 100%', () => {
   assert.equal(getNextZoom(reduced, 'in'), 1);
 });
 
-test('zooming across 100% stops at 100% in either direction', () => {
-  assert.equal(getNextZoom(0.95, 'in'), 1);
-  assert.equal(getNextZoom(1.05, 'out'), 1);
+test('zooming across 100% keeps an even step in either direction', () => {
+  assert.equal(getNextZoom(0.95, 'in'), 1.14);
+  assert.ok(Math.abs(getNextZoom(1.05, 'out') - 0.875) < 1e-12);
 });
 
 test('zoom targets remain inside the supported range', () => {
@@ -36,8 +36,8 @@ test('zoom targets remain inside the supported range', () => {
 test('a fitted zoom below 10% changes gradually in both directions', () => {
   const fittedZoom = 0.05;
 
-  assert.equal(getNextZoom(fittedZoom, 'in'), fittedZoom * 1.15);
-  assert.equal(getNextZoom(fittedZoom, 'out'), fittedZoom / 1.15);
+  assert.equal(getNextZoom(fittedZoom, 'in'), fittedZoom * 1.2);
+  assert.equal(getNextZoom(fittedZoom, 'out'), fittedZoom / 1.2);
 });
 
 test('zero vertical wheel movement does not request a zoom change', () => {
@@ -46,9 +46,9 @@ test('zero vertical wheel movement does not request a zoom change', () => {
   assert.equal(getWheelZoomDirection(0), null);
 });
 
-test('mouse wheels keep 15% steps while trackpads zoom continuously', () => {
-  assert.equal(getWheelZoomTarget(1, -100), 1.15);
-  assert.equal(getWheelZoomTarget(1, -3, 1), 1.15);
+test('mouse wheels keep 20% steps while trackpads zoom continuously', () => {
+  assert.equal(getWheelZoomTarget(1, -100), 1.2);
+  assert.equal(getWheelZoomTarget(1, -3, 1), 1.2);
   assert.equal(getWheelZoomTarget(1, 0), 1);
 
   const trackpadTarget = getWheelZoomTarget(1, -1);
@@ -56,9 +56,9 @@ test('mouse wheels keep 15% steps while trackpads zoom continuously', () => {
   assert.ok(trackpadTarget < 1.01);
 });
 
-test('continuous wheel zoom also stops at actual 100%', () => {
-  assert.equal(getWheelZoomTarget(0.95, -100), 1);
-  assert.equal(getWheelZoomTarget(1.05, 100), 1);
+test('continuous wheel zoom passes through 100% without a jump in step size', () => {
+  assert.equal(getWheelZoomTarget(0.95, -100), 1.14);
+  assert.ok(Math.abs(getWheelZoomTarget(1.05, 100) - 0.875) < 1e-12);
 });
 
 test('zoom labels preserve precision and reserve 100% for actual 1:1', () => {

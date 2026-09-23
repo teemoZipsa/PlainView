@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../src/App';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const fixture = vi.hoisted(() => ({ path: null as string | null }));
+const fixture = vi.hoisted(() => ({ path: null as string | null, loadDelayMs: 0 }));
 const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =>
   command === 'append_file_to_clipboard' ? { imageAvailable: true, fileAvailable: true } : null));
 const newClipboardImage = vi.hoisted(() => vi.fn(async (_pixels: Uint8Array, _width: number, _height: number) => ({ close: async () => {} })));
@@ -31,6 +31,9 @@ vi.mock('../src/hooks/useImageLoader', () => {
     scanFolder: async () => ['C:/audit/1.png', 'C:/audit/2.png'],
     loadImage: async (path: string) => {
       if (path.endsWith('.heic')) throw { kind: 'unsupported_heic', message: 'unsupported' };
+      if (path.endsWith('2.png') && fixture.loadDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, fixture.loadDelayMs));
+      }
       return { src: 'data:image/png;base64,fixture', filePath: path, fileName: path.split('/').pop(),
         fileSize: 100, naturalWidth: 1200, naturalHeight: 800, originalExtension: 'png', isTemporarySource: false };
     },
@@ -56,6 +59,7 @@ async function mount() {
 
 beforeEach(() => {
   fixture.path = null;
+  fixture.loadDelayMs = 0;
   invoke.mockClear();
   newClipboardImage.mockClear();
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
@@ -142,6 +146,21 @@ describe('viewer interaction flows', () => {
     expect(container.querySelector<HTMLImageElement>('.viewer-image')?.style.transform).toContain('90deg');
     await press('ArrowRight');
     expect(container.querySelector('img')?.alt).toBe('2.png');
+  });
+
+  it('keeps the current image visible while the next image loads', async () => {
+    fixture.path = 'C:/audit/1.png';
+    fixture.loadDelayMs = 420;
+    await mount();
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press('ArrowRight');
+    expect(container.querySelector<HTMLImageElement>('.viewer-image')?.alt).toBe('1.png');
+    expect(container.querySelector('.loading-view')).toBeNull();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 260)));
+    expect(container.querySelector('.transition-loading-indicator')).not.toBeNull();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 180)));
+    expect(container.querySelector<HTMLImageElement>('.viewer-image')?.alt).toBe('2.png');
+    expect(container.querySelector('.transition-loading-indicator')).toBeNull();
   });
 
   it('keeps the specific unsupported-format state when opening a file directly', async () => {
