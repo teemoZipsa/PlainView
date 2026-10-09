@@ -20,6 +20,7 @@ const callbacks = () => ({
   onZoomOut: vi.fn(),
   onOriginalSize: vi.fn(),
   onFitScreen: vi.fn(),
+  onFitWindow: vi.fn(),
   onToggleAlwaysOnTop: vi.fn(),
   onRotate: vi.fn(),
   onCopy: vi.fn(),
@@ -84,6 +85,33 @@ function press(key: string, options: KeyboardEventInit = {}) {
 }
 
 describe('useKeyboardShortcuts', () => {
+  it('restores the window with Ctrl+0 while keeping plain 0 as original image zoom', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+    expect(press('0', { ctrlKey: true }).defaultPrevented).toBe(true);
+    press('0', { ctrlKey: true, repeat: true });
+    expect(handlers.onFitWindow).toHaveBeenCalledTimes(1);
+    expect(handlers.onOriginalSize).not.toHaveBeenCalled();
+    press('0');
+    expect(handlers.onOriginalSize).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows window restoration from the toolbar but leaves text inputs alone', async () => {
+    const handlers = callbacks();
+    await renderShortcuts(handlers);
+    const toolbar = document.createElement('div');
+    toolbar.dataset.viewerControls = '';
+    const button = document.createElement('button');
+    const input = document.createElement('input');
+    toolbar.append(button, input);
+    container.append(toolbar);
+    for (const target of [button, input]) {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: '0', ctrlKey: true, bubbles: true }));
+    }
+    expect(handlers.onFitWindow).toHaveBeenCalledTimes(1);
+    expect(handlers.onOriginalSize).not.toHaveBeenCalled();
+  });
+
   it('keeps viewer shortcuts usable after focusing a toolbar button', async () => {
     const handlers = callbacks();
     await renderShortcuts(handlers);

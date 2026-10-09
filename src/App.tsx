@@ -35,6 +35,7 @@ import { SUPPORTED_IMAGE_EXTENSIONS } from './imageFormats';
 import {
   clampPanOffsetToViewport,
   exceedsPanBoundary,
+  getImageWindowSize,
   hasPanOverflow,
   resolveViewportDimensions,
   shouldAutoSizeWindowForImage,
@@ -79,10 +80,7 @@ import type {
 } from './types';
 import './App.css';
 
-const SCREEN_FIT_RATIO = 0.92;
-const MIN_WINDOW_WIDTH = 280;
-const MIN_WINDOW_HEIGHT = 240;
-const WINDOW_SHADOW_GUTTER = 10;
+const DRAG_START_DISTANCE = 4;
 
 interface FullscreenSnapshot extends ViewTransformState {
   currentFilePath: string | null;
@@ -178,6 +176,8 @@ function App() {
   const [showTransitionLoading, setShowTransitionLoading] = useState(false);
   const [showViewerHint, setShowViewerHint] = useState(false);
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>('dark');
+  const [alwaysShowControls, setAlwaysShowControls] = useState(false);
+  const [showTransparencyGrid, setShowTransparencyGrid] = useState(false);
   const [overlayHideDelayMs, setOverlayHideDelayMs] = useState(2000);
   const [gifPause, setGifPause] = useState<GifPauseState | null>(null);
   const [locale, setLocale] = useState(detectLocale);
@@ -208,6 +208,8 @@ function App() {
     loopNavigation: true,
     // Keep the latest persisted defaults available to image and overlay handlers.
     backgroundMode: 'dark',
+    alwaysShowControls: false,
+    showTransparencyGrid: false,
     defaultFitMode: 'auto',
     locale: 'system',
     overlayHideDelayMs: 2000,
@@ -724,26 +726,10 @@ function App() {
         const naturalW = result.naturalWidth;
         const naturalH = result.naturalHeight;
 
-        // Calculate initial zoom based on screen size (stable, not window-dependent)
-        const screenW = window.screen.availWidth * SCREEN_FIT_RATIO;
-        const screenH = window.screen.availHeight * SCREEN_FIT_RATIO;
-
-        let initialZoom = 1;
-        if (naturalW > screenW || naturalH > screenH) {
-          const scaleX = screenW / naturalW;
-          const scaleY = screenH / naturalH;
-          initialZoom = Math.min(scaleX, scaleY);
-        }
-
-        // Resize window to match image
-        const windowShadowSpace = WINDOW_SHADOW_GUTTER * 2;
-        const winW = Math.max(
-          MIN_WINDOW_WIDTH,
-          Math.round(naturalW * initialZoom) + windowShadowSpace
-        );
-        const winH = Math.max(
-          MIN_WINDOW_HEIGHT,
-          Math.round(naturalH * initialZoom) + windowShadowSpace
+        const { width: winW, height: winH } = getImageWindowSize(
+          { width: naturalW, height: naturalH },
+          0,
+          { width: window.screen.availWidth, height: window.screen.availHeight }
         );
 
         let isFullscreen = false;
@@ -1200,6 +1186,23 @@ function App() {
     });
   }, [backgroundMode, saveSettingsInOrder]);
 
+  const toggleTransparencyGrid = useCallback(() => {
+    const previousSettings = settingsRef.current;
+    const nextSettings = {
+      ...previousSettings,
+      showTransparencyGrid: !showTransparencyGrid,
+    };
+    settingsRef.current = nextSettings;
+    setShowTransparencyGrid(nextSettings.showTransparencyGrid);
+    void saveSettingsInOrder(nextSettings).catch(() => {
+      if (settingsRef.current === nextSettings) {
+        settingsRef.current = previousSettings;
+        setShowTransparencyGrid(previousSettings.showTransparencyGrid);
+      }
+      showToast(t('error.settingsSaveFailed'), 'error');
+    });
+  }, [saveSettingsInOrder, showTransparencyGrid, showToast, t]);
+
   const saveViewerSettings = useCallback(
     async (draft: SettingsDraft) => {
       const previousSettings = settingsRef.current;
@@ -1216,6 +1219,8 @@ function App() {
         await saveSettingsInOrder(nextSettings);
         setLocale(detectLocale(nextSettings.locale));
         setOverlayHideDelayMs(nextSettings.overlayHideDelayMs);
+        setAlwaysShowControls(nextSettings.alwaysShowControls);
+        setShowTransparencyGrid(nextSettings.showTransparencyGrid);
         setIsSettingsOpen(false);
         showToast(t('toast.settingsSaved'), 'success');
         return true;
@@ -2002,7 +2007,9 @@ function App() {
     (event: React.PointerEvent | React.MouseEvent): boolean => {
       if (!canStartWindowResize(windowModeRef.current)) return false;
       if (contextMenu) {
-        closeContextMenu();
+        // The root capture handler runs before a menu item's click. Keep the
+        // menu mounted when its own controls receive the pointer press.
+        if (!contextMenuRef.current?.contains(event.target as Node)) closeContextMenu();
         return false;
       }
       if (isInteractionBlocked()) return false;
@@ -2052,7 +2059,7 @@ function App() {
       if (hasPanOverflow(rendered, viewport)) {
         return 'image-pan';
       }
-      return 'none';
+      return windowModeRef.current.isFullscreen ? 'none' : 'window-move';
     },
     [state.naturalSize, state.zoom, state.rotation, getViewportSize, getRenderedSize]
   );
@@ -2086,25 +2093,14 @@ function App() {
 
       dragModeRef.current = mode;
       isDraggingRef.current = true;
+      activePointerIdRef.current = e.pointerId;
       dragStartRef.current = { x: e.clientX, y: e.clientY };
       panStartRef.current = { ...state.panOffset };
-
-      if (mode === 'window-move') {
-        const appWindow = getCurrentWindow();
-        void appWindow.startDragging().catch((error) => {
-          console.warn('Failed to start window dragging:', error);
-        });
-        isDraggingRef.current = false;
-        dragModeRef.current = 'none';
-      } else {
-        activePointerIdRef.current = e.pointerId;
-        setIsPanning(true);
-        try {
-          e.currentTarget.setPointerCapture(e.pointerId);
-        } catch {
-          // Pointer capture is a progressive enhancement; global loss handlers
-          // still reset the drag if the platform declines it.
-        }
+      setIsPanning(true);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Global loss handlers still reset the drag if capture is unavailable.
       }
 
       e.preventDefault();
@@ -2132,7 +2128,7 @@ function App() {
     (e: React.PointerEvent<HTMLDivElement>) => {
       overlay.handleMouseMove(e.clientX, e.clientY, window.innerWidth, window.innerHeight);
 
-      if (!isDraggingRef.current || dragModeRef.current !== 'image-pan') return;
+      if (!isDraggingRef.current || dragModeRef.current === 'none') return;
       if (
         activePointerIdRef.current !== null &&
         e.pointerId !== activePointerIdRef.current
@@ -2146,8 +2142,20 @@ function App() {
 
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        hasDraggedRef.current = true;
+      if (!hasDraggedRef.current && Math.max(Math.abs(dx), Math.abs(dy)) < DRAG_START_DISTANCE) {
+        return;
+      }
+      hasDraggedRef.current = true;
+      gifClickSequenceRef.current = null;
+
+      if (dragModeRef.current === 'window-move') {
+        // Hand off only after movement is intentional. Starting a native drag
+        // on pointer-down consumes ordinary clicks and double-clicks on Windows.
+        stopPanning();
+        void getCurrentWindow().startDragging().catch((error) => {
+          console.warn('Failed to start window dragging:', error);
+        });
+        return;
       }
 
       const viewport = getViewportSize();
@@ -2385,9 +2393,63 @@ function App() {
     [performFullscreenIntent]
   );
 
+  const fitWindowToImage = useCallback(() => {
+    const imageIntent = imageIntentRef.current.snapshot();
+    const isReady = () => {
+      const current = viewerStateRef.current;
+      return imageIntentRef.current.isCurrent(imageIntent) &&
+        Boolean(current.imageSrc) && !current.isLoading && !current.errorMessage;
+    };
+    if (!isReady()) return;
+
+    // Share the fullscreen queue so F11 cannot race with window restoration.
+    void fullscreenQueueRef.current.run(async () => {
+      if (!isReady()) return;
+      try {
+        const result = await performFullscreenIntent('exit-if-active');
+        if (result === 'failed') throw new Error('Could not leave fullscreen');
+        if (!isReady()) return;
+
+        const appWindow = getCurrentWindow();
+        if (await appWindow.isMaximized()) {
+          await appWindow.unmaximize();
+          updateWindowMode({ ready: true, isFullscreen: false, isMaximized: false });
+        }
+        await waitForNextFrame();
+        await waitForNextFrame();
+        if (!isReady()) return;
+
+        const current = viewerStateRef.current;
+        const size = getImageWindowSize(current.naturalSize, current.rotation, {
+          width: window.screen.availWidth,
+          height: window.screen.availHeight,
+        });
+        await invoke('resize_window', { width: size.width, height: size.height });
+        await waitForNextFrame();
+        await waitForNextFrame();
+        if (!isReady()) return;
+
+        const viewport = resolveViewportDimensions(
+          { width: window.innerWidth, height: window.innerHeight },
+          viewerRef.current?.getBoundingClientRect()
+        );
+        setState((prev) => {
+          if (!isReady()) return prev;
+          const zoom = calculateFitZoomForSize(
+            prev.naturalSize.width, prev.naturalSize.height, prev.rotation,
+            viewport.width, viewport.height
+          );
+          return { ...prev, ...createFittedView(prev.rotation, zoom) };
+        });
+      } catch {
+        showToast(t('error.windowOperationFailed'), 'error');
+      }
+    });
+  }, [calculateFitZoomForSize, performFullscreenIntent, showToast, t, updateWindowMode]);
+
   const handleViewerDoubleClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      if (state.isLoading) return;
+      if (state.isLoading || hasDraggedRef.current) return;
       event.preventDefault();
       event.stopPropagation();
 
@@ -2467,6 +2529,7 @@ function App() {
     onZoomOut: zoomOut,
     onOriginalSize: setOriginalSize,
     onFitScreen: fitToScreen,
+    onFitWindow: fitWindowToImage,
     onToggleAlwaysOnTop: toggleAlwaysOnTop,
     onRotate: rotate,
     onCopy: () => {
@@ -2739,6 +2802,8 @@ function App() {
         settingsRef.current = normalizedSettings;
         settingsLoadedRef.current = true;
         setBackgroundMode(normalizedMode);
+        setAlwaysShowControls(normalizedSettings.alwaysShowControls);
+        setShowTransparencyGrid(normalizedSettings.showTransparencyGrid);
         setLocale(detectLocale(normalizedSettings.locale));
         setOverlayHideDelayMs(normalizedSettings.overlayHideDelayMs);
         setCustomOpenApps(normalizedSettings.customOpenApps ?? []);
@@ -2807,29 +2872,13 @@ function App() {
   const getCursorStyle = useCallback((): string => {
     if (isPanning) return 'grabbing';
     if (!state.imageSrc || state.isLoading || state.errorMessage) return 'default';
-
-    const viewport = getViewportSize();
-    const rendered = getRenderedSize(
-      state.naturalSize.width,
-      state.naturalSize.height,
-      state.zoom,
-      state.rotation
-    );
-
-    if (hasPanOverflow(rendered, viewport)) {
-      return 'grab';
-    }
-    return 'default';
+    return getDragMode(false) === 'none' ? 'default' : 'grab';
   }, [
     isPanning,
     state.errorMessage,
     state.imageSrc,
     state.isLoading,
-    state.naturalSize,
-    state.zoom,
-    state.rotation,
-    getViewportSize,
-    getRenderedSize,
+    getDragMode,
   ]);
 
   // ---- Render ----
@@ -2902,14 +2951,18 @@ function App() {
         !windowMode.isFullscreen && !windowMode.isMaximized ? ' window-framed' : ''
       }`}
       style={{ cursor: getCursorStyle() }}
-      onPointerDownCapture={handleResizePointerDownCapture}
+      onPointerDownCapture={(event) => {
+        setShowViewerHint(false);
+        handleResizePointerDownCapture(event);
+      }}
+      onKeyDownCapture={() => setShowViewerHint(false)}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
       onLostPointerCapture={stopPanning}
       onPointerLeave={(event) => {
-        if (!isPanning) {
+        if (!isDraggingRef.current) {
           overlay.handleMouseLeave();
           return;
         }
@@ -2928,7 +2981,7 @@ function App() {
 
       <div
         ref={viewerRef}
-        className="image-container"
+        className={`image-container${showTransparencyGrid && state.imageSrc && !state.errorMessage ? ' transparency-grid' : ''}`}
         tabIndex={-1}
         onDoubleClick={handleViewerDoubleClick}
       >
@@ -2955,6 +3008,8 @@ function App() {
           feedbackDurationMs={overlayHideDelayMs}
           isAlwaysOnTop={state.isAlwaysOnTop}
           backgroundMode={backgroundMode}
+          alwaysShowControls={alwaysShowControls}
+          showTransparencyGrid={showTransparencyGrid}
           currentIndex={state.currentIndex}
           totalImages={state.imageList.length}
           zoom={state.zoom}
@@ -2976,8 +3031,12 @@ function App() {
           onSetZoom={setZoomWithCenter}
           onOriginalSize={setOriginalSize}
           onFitScreen={fitToScreen}
+          onFitWindow={fitWindowToImage}
           onToggleAlwaysOnTop={toggleAlwaysOnTop}
           onToggleBackgroundMode={toggleBackgroundMode}
+          onToggleTransparencyGrid={toggleTransparencyGrid}
+          onCopyPath={handleCopyPath}
+          onReveal={handleRevealInExplorer}
           onOpenSettings={openSettings}
           onRotate={rotate}
         />
@@ -2989,7 +3048,8 @@ function App() {
         </div>
       )}
 
-      {showViewerHint && !state.isLoading && !state.errorMessage && (
+      {showViewerHint && !state.isLoading && !state.errorMessage && !alwaysShowControls &&
+        overlay.activeRegion === 'none' && !hasBlockingModal && !contextMenu && (
         <div className="viewer-first-hint" role="status">{t('viewer.firstHint')}</div>
       )}
 
@@ -3004,6 +3064,7 @@ function App() {
             customApps={customOpenApps}
             t={t}
             onCopy={handleCopyFromMenu}
+            onOpenImage={handleOpenImageFromContextMenu}
             onCopyPath={handleCopyPath}
             onReveal={handleRevealInExplorer}
             onOpenDefault={handleOpenDefaultApp}
@@ -3017,6 +3078,10 @@ function App() {
             onRegisterApp={handleRegisterCustomApp}
             onManageApps={handleManageCustomApps}
             onPrint={handlePrintFile}
+            onFitWindow={() => {
+              dismissContextMenu();
+              fitWindowToImage();
+            }}
             onShowAbout={handleShowAbout}
             onDismiss={dismissContextMenu}
           />
@@ -3304,6 +3369,8 @@ function App() {
             defaultFitMode: settingsRef.current.defaultFitMode,
             locale: settingsRef.current.locale,
             overlayHideDelayMs: settingsRef.current.overlayHideDelayMs,
+            alwaysShowControls: settingsRef.current.alwaysShowControls,
+            showTransparencyGrid: settingsRef.current.showTransparencyGrid,
           }}
           t={t}
           onCheckForUpdates={checkForAppUpdates}
@@ -3316,7 +3383,7 @@ function App() {
         />
       )}
 
-      {toast && (
+      {toast && (!hasBlockingModal || toast.tone !== 'success') && (
         <div
           className={`toast-message toast-${toast.tone}`}
           role={toast.tone === 'error' ? 'alert' : 'status'}

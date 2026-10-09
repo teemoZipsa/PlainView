@@ -17,6 +17,8 @@ const initialSettings: SettingsDraft = {
   defaultFitMode: 'auto',
   locale: 'system',
   overlayHideDelayMs: 2000,
+  alwaysShowControls: false,
+  showTransparencyGrid: false,
 };
 const currentVersion = '0.7.7';
 const currentRelease = {
@@ -108,6 +110,8 @@ describe('SettingsModal', () => {
       delay.value = '4000';
       delay.dispatchEvent(new Event('change', { bubbles: true }));
       checkboxes[0].click();
+      container.querySelector<HTMLInputElement>('#settings-always-show-controls')?.click();
+      container.querySelector<HTMLInputElement>('#settings-transparency-grid')?.click();
       container.querySelector<HTMLButtonElement>('.app-modal-button.primary')?.click();
     });
 
@@ -117,6 +121,8 @@ describe('SettingsModal', () => {
       defaultFitMode: 'fit',
       locale: 'ko',
       overlayHideDelayMs: 4000,
+      alwaysShowControls: true,
+      showTransparencyGrid: true,
     });
   });
 

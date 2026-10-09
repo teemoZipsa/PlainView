@@ -41,6 +41,7 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW are excluded from the file picker, folder nav
 | `-` | Zoom out |
 | `0` | Original size |
 | `F` | Fit to screen |
+| `Ctrl+0` | Fit window to image |
 | `T` | Toggle always on top |
 | `R` | Rotate the view 90 degrees clockwise |
 | `Ctrl+C` | Copy original image and file formats |
@@ -56,7 +57,7 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW are excluded from the file picker, folder nav
 
 - **Borderless window** - a minimal UI that keeps the image as the main surface
 - **Quick image opening** - open from the empty-state button, double-click, `Ctrl+O`, or drag and drop
-- **Contextual HUD** - the idle view shows only the image; navigation, window, and view controls appear only at the relevant edge
+- **Contextual HUD** - the idle view shows only the image; approaching the bottom edge reveals zoom and rotation tools directly. Settings can keep navigation, window, and view controls visible
 - **Dynamic action feedback** - image and zoom changes surface briefly, then hide after the configured duration
 - **Natural folder navigation** - lists same-folder images in human-friendly `1, 2, 10` order for previous/next navigation
 - **Live external changes** - watches the current folder for added, deleted, or replaced files, with focus refresh and `F5` as fallbacks
@@ -66,7 +67,8 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW are excluded from the file picker, folder nav
 - **Reliable borderless resizing** - resize from every edge or corner, including diagonal resizing
 - **Stable window size** - keep the user-selected window size while navigating between images after the first image opens
 - **Fullscreen** - double-click or press `F11` to fit the image, then repeat the action or press `Esc` to restore the previous scale
-- **Window dragging** - use the top move strip or Alt-drag, kept separate from image panning
+- **Restore window size** - use the bottom Fit window button, context menu, or `Ctrl+0` after resizing the borders. The window follows the current image orientation and fits within the monitor, including when leaving fullscreen or maximization
+- **Natural dragging** - drag a fitted image to move the window, or pan the image when zoomed beyond the viewport. The top strip and Alt-drag still move the window while zoomed. A small movement threshold keeps clicks and double-clicks intact
 - **Context menu** - copy the image and file formats together or copy its path; show it in Explorer; open it with the default, Windows-selected, or registered app; save, move, rename, inspect properties, move to Recycle Bin, print with PlainView's built-in print dialog, or view app version and license details; the empty start screen also offers image open and app info actions; supports arrow-key, Tab, and Escape navigation
 - **Adaptive copy** - one `Ctrl+C` or context-menu action supplies both image pixels and the file object so each paste target can automatically choose the compatible format
 - **File path copy** - copy the current image's full path from the context menu
@@ -76,7 +78,8 @@ HEIC, HEIF, RAW, CR2, NEF, and ARW are excluded from the file picker, folder nav
 - **Quick file move** - move the current image to another folder with the context menu or `Ctrl+M`
 - **Recycle Bin support** - move the current image to the Recycle Bin with the context menu or `Delete`
 - **GIF pause** - click a GIF to pause on the current frame, then click again to resume
-- **Image info** - hover the bottom info bar to see path, dimensions, file size, and extension
+- **Image info** - click Image information to keep a panel open while browsing, select or copy the full path, and show the image in Explorer. Close it with its button or Escape
+- **Transparency grid** - toggle a checkerboard background from More or Settings to inspect transparent areas. This preference is independent of the light/dark theme and does not affect copy, save, or print output
 - **Always on top** - keep the image above other windows
 - **Rotation and direct zoom input** - view-only 90-degree rotation and numeric zoom entry from the bottom scale label
 - **Drag and drop** - open an image by dropping it into the window

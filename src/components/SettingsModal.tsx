@@ -188,6 +188,26 @@ export default function SettingsModal({
             </span>
           </label>
 
+          <label className="settings-toggle">
+            <input id="settings-always-show-controls" type="checkbox"
+              checked={draft.alwaysShowControls} disabled={isSaving}
+              onChange={(event) => updateDraft('alwaysShowControls', event.target.checked)} />
+            <span>
+              <strong>{t('settings.alwaysShowControls')}</strong>
+              <small>{t('settings.alwaysShowControlsDescription')}</small>
+            </span>
+          </label>
+
+          <label className="settings-toggle">
+            <input id="settings-transparency-grid" type="checkbox"
+              checked={draft.showTransparencyGrid} disabled={isSaving}
+              onChange={(event) => updateDraft('showTransparencyGrid', event.target.checked)} />
+            <span>
+              <strong>{t('overlay.transparencyGrid')}</strong>
+              <small>{t('settings.transparencyGridDescription')}</small>
+            </span>
+          </label>
+
           <section
             className="settings-panel settings-default-apps"
             aria-labelledby="settings-default-apps-title"

@@ -12,6 +12,7 @@ interface KeyboardShortcutsProps {
   onZoomOut: () => void;
   onOriginalSize: () => void;
   onFitScreen: () => void;
+  onFitWindow: () => void;
   onToggleAlwaysOnTop: () => void;
   onRotate: () => void;
   onCopy: () => void;
@@ -174,6 +175,12 @@ export function useKeyboardShortcuts(props: KeyboardShortcutsProps) {
       if (isPropertiesShortcut(e)) {
         e.preventDefault();
         p.onShowProperties();
+        return;
+      }
+
+      if (e.key === '0' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (!e.repeat) p.onFitWindow();
         return;
       }
 

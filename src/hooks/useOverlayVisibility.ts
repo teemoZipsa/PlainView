@@ -5,7 +5,7 @@ export type OverlayRegion = 'none' | 'left' | 'right' | 'bottom' | 'top-right';
 const NAV_EDGE_WIDTH = 56;
 const NAV_CENTER_MAX_HEIGHT = 220;
 const TOP_RIGHT_HEIGHT = 104;
-const TOP_RIGHT_WIDTH = 144;
+const TOP_RIGHT_WIDTH = 184;
 const BOTTOM_HEIGHT = 100;
 const BOTTOM_MAX_WIDTH = 360;
 

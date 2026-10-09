@@ -21,6 +21,8 @@ function createProps(overrides: Partial<OverlayProps> = {}): OverlayProps {
     feedbackDurationMs: 2000,
     isAlwaysOnTop: false,
     backgroundMode: 'dark',
+    alwaysShowControls: false,
+    showTransparencyGrid: false,
     currentIndex: 0,
     totalImages: 0,
     zoom: 1,
@@ -42,8 +44,12 @@ function createProps(overrides: Partial<OverlayProps> = {}): OverlayProps {
     onSetZoom: noop,
     onOriginalSize: noop,
     onFitScreen: noop,
+    onFitWindow: noop,
     onToggleAlwaysOnTop: noop,
     onToggleBackgroundMode: noop,
+    onToggleTransparencyGrid: noop,
+    onCopyPath: noop,
+    onReveal: noop,
     onOpenSettings: noop,
     onRotate: noop,
     ...overrides,
@@ -136,6 +142,9 @@ describe('OverlayControls', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('.more-btn')?.focus());
     await render('none');
     expect(container.querySelector('.overlay-top-right')?.classList.contains('is-visible')).toBe(true);
+    await render('bottom');
+    expect(container.querySelector('.overlay-bottom-center')?.classList.contains('is-visible')).toBe(true);
+    expect(container.querySelector('.overlay-top-right')?.classList.contains('is-visible')).toBe(true);
     const outside = document.createElement('button');
     document.body.append(outside);
     await act(async () => outside.focus());
@@ -143,7 +152,7 @@ describe('OverlayControls', () => {
     outside.remove();
   });
 
-  it('keeps the bottom HUD compact until its status is clicked', async () => {
+  it('reveals view tools directly at the bottom and opens information on click', async () => {
     const onZoomOut = vi.fn();
 
     await act(async () => {
@@ -162,11 +171,12 @@ describe('OverlayControls', () => {
     expect(status?.getAttribute('aria-expanded')).toBe('false');
     expect(status?.textContent).toContain('100%');
     expect(status?.textContent).toContain('1 / 3');
-    expect(container.querySelector('.overlay-bottom-row')).toBeNull();
+    expect(container.querySelector('.overlay-bottom-row')).not.toBeNull();
 
     await act(async () => status?.click());
 
     expect(status?.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('.image-info-panel')).not.toBeNull();
     expect(container.querySelector('.overlay-bottom-row')).not.toBeNull();
 
     await act(async () => {
@@ -175,6 +185,36 @@ describe('OverlayControls', () => {
         ?.click();
     });
     expect(onZoomOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps information open across pointer exit and image navigation, then restores focus on Escape', async () => {
+    const props = createProps({ ...imageProps, activeRegion: 'bottom', onClose: vi.fn(), onCopyPath: vi.fn() });
+    await act(async () => root.render(<OverlayControls {...props} />));
+    await act(async () => container.querySelector<HTMLButtonElement>('.overlay-status-button')?.click());
+    expect(document.activeElement).toBe(container.querySelector('.image-info-close'));
+
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    await act(async () => outside.focus());
+    await act(async () => root.render(<OverlayControls {...props} activeRegion="none"
+      currentIndex={1} fileName="second.png" imageInfo={{ ...props.imageInfo, filePath: 'C:\\images\\second.png' }} />));
+    expect(container.querySelector<HTMLTextAreaElement>('#image-info-path')?.value).toBe('C:\\images\\second.png');
+    expect(container.querySelector('.image-info-panel')?.textContent).toContain('2 / 3');
+    await act(async () => container.querySelector<HTMLButtonElement>('.image-info-actions button')?.click());
+    expect(props.onCopyPath).toHaveBeenCalledTimes(1);
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(container.querySelector('.image-info-panel')).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('.overlay-status-button'));
+    expect(props.onClose).not.toHaveBeenCalled();
+    outside.remove();
+  });
+
+  it('keeps tools visible without hovering when the preference is enabled', async () => {
+    await act(async () => root.render(<OverlayControls {...createProps({ ...imageProps, alwaysShowControls: true })} />));
+    for (const selector of ['.overlay-top-right', '.overlay-bottom-center', '.nav-left', '.nav-right']) {
+      expect(container.querySelector(selector)?.classList.contains('is-visible')).toBe(true);
+    }
+    expect(container.querySelector('.overlay-bottom-row')).not.toBeNull();
   });
 
   it('shows the bitmap absolute scale instead of relabeling fit as 100%', async () => {

@@ -60,6 +60,8 @@ export interface Settings {
   alwaysOnTopDefault: boolean;
   loopNavigation: boolean;
   backgroundMode: BackgroundMode;
+  alwaysShowControls: boolean;
+  showTransparencyGrid: boolean;
   defaultFitMode: FitMode;
   locale: LocalePreference;
   overlayHideDelayMs: number;
@@ -74,6 +76,8 @@ export type SettingsDraft = Pick<
   | 'defaultFitMode'
   | 'locale'
   | 'overlayHideDelayMs'
+  | 'alwaysShowControls'
+  | 'showTransparencyGrid'
 >;
 
 export interface WindowBounds {

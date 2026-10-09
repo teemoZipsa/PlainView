@@ -9,6 +9,7 @@ const shortcuts: ReadonlyArray<readonly [TranslationKey, string]> = [
   ['shortcuts.zoom', '+ / −'],
   ['overlay.originalSizeAria', '0'],
   ['overlay.fitScreenAria', 'F'],
+  ['overlay.fitWindowAria', 'Ctrl+0'],
   ['shortcuts.rotate', 'R'],
   ['shortcuts.fullscreen', 'F11'],
   ['shortcuts.escape', 'Esc'],
@@ -49,13 +50,16 @@ export default function ShortcutsModal({ t, onClose, ...focusOptions }: Shortcut
             </svg>
           </button>
         </div>
-        <dl className="shortcuts-list" tabIndex={0} aria-label={t('shortcuts.title')}>
-          {shortcuts.map(([label, keys]) => (
-            <div className="shortcut-row" key={label}>
-              <dt>{t(label)}</dt><dd><kbd>{keys}</kbd></dd>
-            </div>
-          ))}
-        </dl>
+        <div className="shortcuts-list" tabIndex={0} role="region" aria-label={t('shortcuts.title')}>
+          <p className="shortcuts-drag-help">{t('shortcuts.dragHelp')}</p>
+          <dl>
+            {shortcuts.map(([label, keys]) => (
+              <div className="shortcut-row" key={label}>
+                <dt>{t(label)}</dt><dd><kbd>{keys}</kbd></dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </div>
     </div>
   );

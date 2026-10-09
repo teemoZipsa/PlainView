@@ -4,6 +4,7 @@ import {
   PAN_OVERFLOW_TOLERANCE,
   clampPanOffsetToViewport,
   exceedsPanBoundary,
+  getImageWindowSize,
   hasPanOverflow,
   resolveViewportDimensions,
   shouldAutoSizeWindowForImage,
@@ -24,6 +25,32 @@ test('window auto-sizing is consumed by the first fresh image only', () => {
   assert.equal(shouldAutoSizeWindowForImage(false, true), true);
   assert.equal(shouldAutoSizeWindowForImage(true, true), false);
   assert.equal(shouldAutoSizeWindowForImage(false, false), false);
+});
+
+test('restoring a window uses native image dimensions independently of a manually resized viewport', () => {
+  assert.deepEqual(
+    getImageWindowSize({ width: 1200, height: 800 }, 0, { width: 1920, height: 1080 }),
+    { width: 1202, height: 802 }
+  );
+});
+
+test('restoring a rotated image respects the monitor height and current orientation', () => {
+  for (const rotation of [90, 270]) {
+    assert.deepEqual(
+      getImageWindowSize({ width: 1200, height: 800 }, rotation, { width: 1920, height: 1080 }),
+      { width: 664, height: 996 }
+    );
+  }
+});
+
+test('restored windows keep small images usable and large images inside the screen', () => {
+  assert.deepEqual(
+    getImageWindowSize({ width: 16, height: 16 }, 0, { width: 1920, height: 1080 }),
+    { width: 280, height: 240 }
+  );
+  const large = getImageWindowSize({ width: 8000, height: 6000 }, 180, { width: 1280, height: 720 });
+  assert(large.width <= 1280 && large.height <= 720);
+  assert(Math.abs((large.width - 2) / (large.height - 2) - 4 / 3) < 0.002);
 });
 
 test('window growth clamps a previously valid pan to the new smaller range', () => {

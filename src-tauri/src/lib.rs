@@ -403,6 +403,10 @@ pub struct Settings {
     pub loop_navigation: bool,
     #[serde(default = "default_background_mode")]
     pub background_mode: String,
+    #[serde(default)]
+    pub always_show_controls: bool,
+    #[serde(default)]
+    pub show_transparency_grid: bool,
     #[serde(default = "default_fit_mode")]
     pub default_fit_mode: String,
     #[serde(default = "default_locale")]
@@ -522,6 +526,8 @@ impl Default for Settings {
             always_on_top_default: false,
             loop_navigation: true,
             background_mode: default_background_mode(),
+            always_show_controls: false,
+            show_transparency_grid: false,
             default_fit_mode: default_fit_mode(),
             locale: default_locale(),
             overlay_hide_delay_ms: default_overlay_hide_delay_ms(),
@@ -2735,6 +2741,23 @@ mod tests {
         assert_eq!(settings.default_fit_mode, "auto");
         assert!(settings.loop_navigation);
         assert!(settings.remember_window_position);
+        assert!(!settings.always_show_controls);
+        assert!(!settings.show_transparency_grid);
+    }
+
+    #[test]
+    fn viewer_display_preferences_survive_settings_round_trip() {
+        let settings = Settings {
+            always_show_controls: true,
+            show_transparency_grid: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"alwaysShowControls\":true"));
+        assert!(json.contains("\"showTransparencyGrid\":true"));
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert!(restored.always_show_controls);
+        assert!(restored.show_transparency_grid);
     }
 
     #[cfg(windows)]

@@ -31,6 +31,23 @@ export const shouldAutoSizeWindowForImage = (
   initialSizingPending: boolean
 ) => !hasDisplayedImage && initialSizingPending;
 
+/** Restore the opening size, allowing for rotation, window chrome and small images. */
+export const getImageWindowSize = (
+  image: ViewportDimensions,
+  rotation: number,
+  screen: ViewportDimensions
+): ViewportDimensions => {
+  const isRotated = rotation === 90 || rotation === 270;
+  const width = isRotated ? image.height : image.width;
+  const height = isRotated ? image.width : image.height;
+  const zoom = Math.min(1, (screen.width * 0.92) / width, (screen.height * 0.92) / height);
+  return {
+    // One CSS pixel on each side; the native shadow needs no client padding.
+    width: Math.max(280, Math.round(width * zoom) + 2),
+    height: Math.max(240, Math.round(height * zoom) + 2),
+  };
+};
+
 export const resolveViewportDimensions = (
   fallback: ViewportDimensions,
   measured?: Partial<ViewportDimensions> | null

@@ -204,6 +204,8 @@ export function useImageLoader() {
       alwaysOnTopDefault: settings.alwaysOnTopDefault ?? false,
       loopNavigation: settings.loopNavigation ?? true,
       backgroundMode: settings.backgroundMode === 'light' ? 'light' : 'dark',
+      alwaysShowControls: settings.alwaysShowControls === true,
+      showTransparencyGrid: settings.showTransparencyGrid === true,
       defaultFitMode:
         settings.defaultFitMode === 'fit' || settings.defaultFitMode === 'original'
           ? settings.defaultFitMode

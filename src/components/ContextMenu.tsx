@@ -11,6 +11,7 @@ interface ContextMenuProps {
   submenuVerticalDirection: 'down' | 'up';
   customApps: CustomOpenApp[];
   t: TFunction;
+  onOpenImage: () => void;
   onCopy: () => void;
   onCopyPath: () => void;
   onReveal: () => void;
@@ -25,6 +26,7 @@ interface ContextMenuProps {
   onRegisterApp: () => void;
   onManageApps: () => void;
   onPrint: () => void;
+  onFitWindow: () => void;
   onShowAbout: () => void;
   onDismiss: () => void;
 }
@@ -45,6 +47,7 @@ export default function ContextMenu({
   submenuVerticalDirection,
   customApps,
   t,
+  onOpenImage,
   onCopy,
   onCopyPath,
   onReveal,
@@ -59,6 +62,7 @@ export default function ContextMenu({
   onRegisterApp,
   onManageApps,
   onPrint,
+  onFitWindow,
   onShowAbout,
   onDismiss,
 }: ContextMenuProps) {
@@ -163,8 +167,11 @@ export default function ContextMenu({
       onKeyDown={handleMenuKeyDown}
       onWheel={(event) => event.stopPropagation()}
     >
+      <button ref={firstItemRef} className="context-menu-item" type="button" role="menuitem" onClick={onOpenImage}>
+        <span>{t('empty.openImage')}</span>
+        <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+O</kbd>
+      </button>
       <button
-        ref={firstItemRef}
         className="context-menu-item"
         type="button"
         role="menuitem"
@@ -172,6 +179,14 @@ export default function ContextMenu({
       >
         <span>{t('menu.copy')}</span>
         <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+C</kbd>
+      </button>
+
+      <button className="context-menu-item" type="button" role="menuitem" title={t('menu.saveAsTitle')} onClick={onSaveAs}>
+        <span>{t('menu.saveAs')}</span>
+        <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+S</kbd>
+      </button>
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onReveal}>
+        {t('menu.reveal')}
       </button>
 
       <div className="context-menu-divider" role="separator" />
@@ -263,17 +278,10 @@ export default function ContextMenu({
           id="context-file-submenu"
           role="menu"
         >
-          <button className="context-menu-item" type="button" role="menuitem" onClick={onReveal}>
-            {t('menu.reveal')}
-          </button>
           <button className="context-menu-item" type="button" role="menuitem" onClick={onCopyPath}>
             {t('menu.copyPath')}
           </button>
           <div className="context-menu-divider" role="separator" />
-          <button className="context-menu-item" type="button" role="menuitem" title={t('menu.saveAsTitle')} onClick={onSaveAs}>
-            <span>{t('menu.saveAs')}</span>
-            <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+S</kbd>
-          </button>
           <button className="context-menu-item" type="button" role="menuitem" onClick={onMoveFile}>
             <span>{t('menu.moveFile')}</span>
             <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+M</kbd>
@@ -309,6 +317,11 @@ export default function ContextMenu({
       </button>
 
       <div className="context-menu-divider" role="separator" />
+
+      <button className="context-menu-item" type="button" role="menuitem" onClick={onFitWindow}>
+        <span>{t('overlay.fitWindowAria')}</span>
+        <kbd className="context-menu-shortcut" aria-hidden="true">Ctrl+0</kbd>
+      </button>
 
       <button
         className="context-menu-item"

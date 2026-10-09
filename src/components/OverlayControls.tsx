@@ -4,14 +4,7 @@ import type { OverlayRegion } from '../hooks/useOverlayVisibility';
 import type { TFunction } from '../i18n';
 import type { BackgroundMode } from '../types';
 import { formatZoomPercent, MAX_ZOOM, MIN_ZOOM } from '../zoom';
-
-interface ImageInfo {
-  filePath: string | null;
-  fileSize: number;
-  width: number;
-  height: number;
-  originalExtension: string | null;
-}
+import ImageInfoPanel, { type ImageInfo } from './ImageInfoPanel';
 
 interface OverlayControlsProps {
   isLoading: boolean;
@@ -20,6 +13,8 @@ interface OverlayControlsProps {
   feedbackDurationMs: number;
   isAlwaysOnTop: boolean;
   backgroundMode: BackgroundMode;
+  alwaysShowControls: boolean;
+  showTransparencyGrid: boolean;
   currentIndex: number;
   totalImages: number;
   zoom: number;
@@ -35,8 +30,12 @@ interface OverlayControlsProps {
   onSetZoom: (zoom: number) => void;
   onOriginalSize: () => void;
   onFitScreen: () => void;
+  onFitWindow: () => void;
   onToggleAlwaysOnTop: () => void;
   onToggleBackgroundMode: () => void;
+  onToggleTransparencyGrid: () => void;
+  onCopyPath: () => void;
+  onReveal: () => void;
   onOpenSettings: () => void;
   onRotate: () => void;
 }
@@ -50,6 +49,8 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   feedbackDurationMs,
   isAlwaysOnTop,
   backgroundMode,
+  alwaysShowControls,
+  showTransparencyGrid,
   currentIndex,
   totalImages,
   zoom,
@@ -65,15 +66,18 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   onSetZoom,
   onOriginalSize,
   onFitScreen,
+  onFitWindow,
   onToggleAlwaysOnTop,
   onToggleBackgroundMode,
+  onToggleTransparencyGrid,
+  onCopyPath,
+  onReveal,
   onOpenSettings,
   onRotate,
 }) => {
   const hasImage = Boolean(imageInfo.filePath) && totalImages > 0;
   const [focusedRegion, setFocusedRegion] = useState<OverlayRegion>('none');
   const pointerFocusRef = useRef(false);
-  const activeRegion = focusedRegion !== 'none' ? focusedRegion : pointerRegion;
   const statusRef = useRef<HTMLButtonElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastFocusSequenceRef = useRef(0);
@@ -85,11 +89,30 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   const previousPathRef = useRef(imageInfo.filePath);
   const [isEditingZoom, setIsEditingZoom] = useState(false);
   const [zoomDraft, setZoomDraft] = useState('');
-  const [isBottomExpanded, setIsBottomExpanded] = useState(false);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [feedbackKind, setFeedbackKind] = useState<FeedbackKind | null>(null);
   const [isInfoVisible, setIsInfoVisible] = useState(false);
-  const [infoPopoverPosition, setInfoPopoverPosition] = useState({ left: 0, top: 0 });
+  const restoreInfoFocusRef = useRef(false);
+  const regionVisible = (region: OverlayRegion) =>
+    alwaysShowControls || pointerRegion === region || focusedRegion === region;
+  const bottomVisible = regionVisible('bottom') || isInfoVisible || isEditingZoom;
+  const closeInfoPanel = useCallback(() => {
+    restoreInfoFocusRef.current = true;
+    pointerFocusRef.current = false;
+    setFocusedRegion('bottom');
+    setIsInfoVisible(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!isInfoVisible && restoreInfoFocusRef.current) {
+      restoreInfoFocusRef.current = false;
+      statusRef.current?.focus({ preventScroll: true });
+    }
+  }, [isInfoVisible]);
+
+  useEffect(() => {
+    if (!hasImage) setIsInfoVisible(false);
+  }, [hasImage]);
 
   useLayoutEffect(() => {
     if (!focusRequest || focusRequest.sequence === lastFocusSequenceRef.current) return;
@@ -99,16 +122,12 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
       setFocusedRegion(focusRequest.region);
       return;
     }
-    if (focusRequest.region === 'bottom' && !isBottomExpanded) {
-      setIsBottomExpanded(true);
-      return;
-    }
     const target = focusRequest.region === 'top-right'
       ? moreButtonRef.current
       : bottomRef.current?.querySelector<HTMLButtonElement>('.overlay-bottom-row button');
     target?.focus({ preventScroll: true });
     lastFocusSequenceRef.current = focusRequest.sequence;
-  }, [focusRequest, focusedRegion, hasImage, isBottomExpanded]);
+  }, [focusRequest, focusedRegion, hasImage]);
 
   const clearFeedbackTimer = useCallback(() => {
     if (!feedbackTimerRef.current) return;
@@ -132,11 +151,11 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   );
 
   useEffect(() => {
-    if (previousZoomRef.current !== zoom && hasImage && activeRegion !== 'bottom') {
+    if (previousZoomRef.current !== zoom && hasImage && !bottomVisible) {
       showFeedback('zoom');
     }
     previousZoomRef.current = zoom;
-  }, [activeRegion, hasImage, showFeedback, zoom]);
+  }, [bottomVisible, hasImage, showFeedback, zoom]);
 
   useEffect(() => {
     if (previousPathRef.current && previousPathRef.current !== imageInfo.filePath && hasImage) {
@@ -146,30 +165,30 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
   }, [hasImage, imageInfo.filePath, showFeedback]);
 
   useEffect(() => {
-    if (activeRegion !== 'bottom') {
-      setIsBottomExpanded(false);
-      setIsInfoVisible(false);
-    }
-    if (activeRegion !== 'top-right') {
+    if (pointerRegion !== 'top-right' && focusedRegion !== 'top-right') {
       setIsMoreOpen(false);
     }
-  }, [activeRegion]);
+  }, [pointerRegion, focusedRegion]);
 
   useEffect(() => {
-    if (!isMoreOpen) return;
+    if (!isMoreOpen && !isInfoVisible) return;
 
     const handleEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], [role="menu"], .zoom-input')) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      setIsMoreOpen(false);
-      moreButtonRef.current?.focus({ preventScroll: true });
+      if (isMoreOpen) {
+        setIsMoreOpen(false);
+        moreButtonRef.current?.focus({ preventScroll: true });
+      } else {
+        closeInfoPanel();
+      }
     };
 
     window.addEventListener('keydown', handleEscape, true);
     return () => window.removeEventListener('keydown', handleEscape, true);
-  }, [isMoreOpen]);
+  }, [closeInfoPanel, isInfoVisible, isMoreOpen]);
 
   useEffect(() => clearFeedbackTimer, [clearFeedbackTimer]);
 
@@ -183,35 +202,6 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
     action();
     setIsMoreOpen(false);
   };
-
-  const formatFileSize = (bytes: number) => {
-    if (!Number.isFinite(bytes) || bytes <= 0) return t('overlay.unknown');
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let size = bytes;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex += 1;
-    }
-
-    const precision = unitIndex === 0 || size >= 100 ? 0 : 1;
-    return `${size.toFixed(precision)} ${units[unitIndex]}`;
-  };
-
-  const updateInfoPopoverPosition = useCallback(() => {
-    const rect = statusRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const popoverWidth = Math.min(360, Math.max(220, window.innerWidth - 16));
-    const minLeft = 8 + popoverWidth / 2;
-    const maxLeft = window.innerWidth - 8 - popoverWidth / 2;
-    const desiredLeft = rect.left + rect.width / 2;
-    const left = Math.max(minLeft, Math.min(maxLeft, desiredLeft));
-    const top = Math.max(8, rect.top - 8);
-
-    setInfoPopoverPosition({ left, top });
-  }, []);
 
   const startZoomEdit = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -250,16 +240,10 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
     onSetZoom(clampedPercent / 100);
   };
 
-  const toggleBottomControls = (event: React.MouseEvent) => {
+  const toggleInfoPanel = (event: React.MouseEvent) => {
     event.stopPropagation();
-    setIsBottomExpanded((current) => !current);
-    setIsInfoVisible(false);
-  };
-
-  const showInfoPopover = () => {
-    if (isBottomExpanded) return;
-    updateInfoPopoverPosition();
-    setIsInfoVisible(true);
+    if (isInfoVisible) closeInfoPanel();
+    else setIsInfoVisible(true);
   };
 
   const focusRegionFor = (target: EventTarget | null): OverlayRegion => {
@@ -290,7 +274,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
         }
       }}
     >
-      <div data-control-region="top-right" className={`overlay-top-right ${activeRegion === 'top-right' ? 'is-visible' : ''}`}>
+      <div data-control-region="top-right" className={`overlay-top-right ${regionVisible('top-right') ? 'is-visible' : ''}`}>
         <div className="overlay-window-controls">
           <button
             ref={moreButtonRef}
@@ -453,6 +437,16 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
                 <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3V9.6h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06-.06A1.7 1.7 0 0 0 19.4 9c.35.3.56.72.6 1.18V13.6h-.09A1.7 1.7 0 0 0 19.4 15Z" />
               </svg>
             </button>
+            <button type="button" className={`overlay-btn grid-btn ${showTransparencyGrid ? 'active' : ''}`}
+              title={t('overlay.transparencyGrid')} aria-label={t('overlay.transparencyGrid')}
+              aria-pressed={showTransparencyGrid}
+              onClick={(event) => handleMoreAction(event, onToggleTransparencyGrid)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+                <path d="M3 3h6v6H3zM15 3h6v6h-6zM9 9h6v6H9zM3 15h6v6H3zM15 15h6v6h-6z" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
           </div>
         )}
       </div>
@@ -462,7 +456,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           <button
             type="button"
             className={`overlay-btn nav-btn nav-left ${
-              activeRegion === 'left' ? 'is-visible' : ''
+              regionVisible('left') ? 'is-visible' : ''
             }`}
             data-control-region="left"
             onClick={(event) => handleButtonClick(event, onPrevImage)}
@@ -487,7 +481,7 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           <button
             type="button"
             className={`overlay-btn nav-btn nav-right ${
-              activeRegion === 'right' ? 'is-visible' : ''
+              regionVisible('right') ? 'is-visible' : ''
             }`}
             data-control-region="right"
             onClick={(event) => handleButtonClick(event, onNextImage)}
@@ -517,10 +511,10 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
           ref={bottomRef}
           data-control-region="bottom"
           className={`overlay-bottom-center ${
-            activeRegion === 'bottom' ? 'is-visible' : ''
-          } ${isBottomExpanded ? 'is-expanded' : ''}`}
+            bottomVisible ? 'is-visible' : ''
+          }`}
         >
-          {isBottomExpanded && (
+          {bottomVisible && (
             <div className="overlay-bottom-row">
               <button
                 type="button"
@@ -657,44 +651,50 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
             </div>
           )}
 
-          <button
-            ref={statusRef}
-            type="button"
-            className="overlay-status-button"
-            aria-expanded={isBottomExpanded}
-            aria-label={
-              isBottomExpanded
-                ? t('overlay.hideViewControls')
-                : t('overlay.showViewControls')
-            }
-            title={
-              isBottomExpanded
-                ? t('overlay.hideViewControls')
-                : t('overlay.showViewControls')
-            }
-            onClick={toggleBottomControls}
-            onMouseEnter={showInfoPopover}
-            onMouseMove={updateInfoPopoverPosition}
-            onMouseLeave={() => setIsInfoVisible(false)}
-          >
-            <span className="status-zoom">{formatZoomPercent(zoom)}%</span>
-            {totalImages > 1 && (
-              <>
-                <span className="status-separator" aria-hidden="true">·</span>
-                <span className="info-counter">
-                  {currentIndex + 1} / {totalImages}
-                </span>
-              </>
-            )}
-            <svg className={`status-chevron${isBottomExpanded ? ' expanded' : ''}`} width="12" height="12"
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-              <path d="m6 15 6-6 6 6" />
-            </svg>
-          </button>
+          <div className="overlay-status-row">
+            <button
+              type="button"
+              className="overlay-window-fit-button"
+              disabled={isLoading}
+              title={t('overlay.fitWindowTitle')}
+              aria-label={t('overlay.fitWindowAria')}
+              aria-keyshortcuts="Control+0"
+              onClick={(event) => handleButtonClick(event, onFitWindow)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M3 8h18M8 12h8v5H8z" />
+              </svg>
+              {t('overlay.fitWindowButton')}
+            </button>
+            <button
+              ref={statusRef}
+              type="button"
+              className="overlay-status-button"
+              aria-expanded={isInfoVisible}
+              aria-controls="image-info-panel"
+              aria-label={t('overlay.imageInfo')}
+              title={t('overlay.imageInfo')}
+              onClick={toggleInfoPanel}
+            >
+              <span>{t('overlay.infoButton')}</span>
+              <span className="status-separator" aria-hidden="true">·</span>
+              <span className="status-zoom">{formatZoomPercent(zoom)}%</span>
+              {totalImages > 1 && (
+                <>
+                  <span className="status-separator" aria-hidden="true">·</span>
+                  <span className="info-counter">
+                    {currentIndex + 1} / {totalImages}
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
-      {hasImage && feedbackKind && activeRegion !== 'bottom' && (
+      {hasImage && feedbackKind && !bottomVisible && (
         <div className={`overlay-action-feedback ${feedbackKind}`} role="status" aria-live="polite">
           {feedbackKind === 'zoom' ? (
             <span>{formatZoomPercent(zoom)}%</span>
@@ -711,45 +711,9 @@ const OverlayControls: React.FC<OverlayControlsProps> = ({
         </div>
       )}
 
-      {hasImage && isInfoVisible && activeRegion === 'bottom' && (
-        <div
-          className="info-popover"
-          style={{
-            left: infoPopoverPosition.left,
-            top: infoPopoverPosition.top,
-          }}
-        >
-          <div className="info-popover-row">
-            <span>{t('overlay.path')}</span>
-            <strong title={imageInfo.filePath ?? ''}>
-              {imageInfo.filePath || t('overlay.unknown')}
-            </strong>
-          </div>
-          <div className="info-popover-row">
-            <span>{t('overlay.dimensions')}</span>
-            <strong>
-              {imageInfo.width > 0 && imageInfo.height > 0
-                ? `${imageInfo.width} x ${imageInfo.height}`
-                : t('overlay.unknown')}
-            </strong>
-          </div>
-          <div className="info-popover-row">
-            <span>{t('overlay.fileSize')}</span>
-            <strong>{formatFileSize(imageInfo.fileSize)}</strong>
-          </div>
-          <div className="info-popover-row">
-            <span>{t('overlay.extension')}</span>
-            <strong>{imageInfo.originalExtension || t('overlay.unknown')}</strong>
-          </div>
-          {totalImages > 1 && (
-            <div className="info-popover-row">
-              <span>{t('overlay.index')}</span>
-              <strong>
-                {currentIndex + 1} / {totalImages}
-              </strong>
-            </div>
-          )}
-        </div>
+      {hasImage && isInfoVisible && (
+        <ImageInfoPanel imageInfo={imageInfo} fileName={fileName} currentIndex={currentIndex}
+          totalImages={totalImages} t={t} onClose={closeInfoPanel} onCopyPath={onCopyPath} onReveal={onReveal} />
       )}
     </div>
   );

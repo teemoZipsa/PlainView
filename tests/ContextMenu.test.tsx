@@ -20,6 +20,7 @@ const customApps: CustomOpenApp[] = [
 ];
 
 const callbacks = () => ({
+  onOpenImage: vi.fn(),
   onCopy: vi.fn(),
   onCopyPath: vi.fn(),
   onReveal: vi.fn(),
@@ -34,6 +35,7 @@ const callbacks = () => ({
   onRegisterApp: vi.fn(),
   onManageApps: vi.fn(),
   onPrint: vi.fn(),
+  onFitWindow: vi.fn(),
   onShowAbout: vi.fn(),
   onDismiss: vi.fn(),
 });
@@ -102,15 +104,29 @@ describe('ContextMenu', () => {
     const handlers = await renderMenu();
 
     const rootButtons = getRootButtons();
-    expect(rootButtons).toHaveLength(5);
+    expect(rootButtons).toHaveLength(9);
     expect(rootButtons.map((button) => button.textContent)).toEqual([
+      'empty.openImageCtrl+O',
       'menu.copyCtrl+C',
+      'menu.saveAsCtrl+S',
+      'menu.reveal',
       'menu.open›',
       'menu.fileActions›',
       'menu.printCtrl+P',
+      'overlay.fitWindowAriaCtrl+0',
       'menu.about',
     ]);
     expect(container.querySelectorAll('.context-submenu.nested')).toHaveLength(0);
+
+    await act(async () => rootButtons[0].click());
+    await act(async () => rootButtons[2].click());
+    await act(async () => rootButtons[3].click());
+    expect(handlers.onOpenImage).toHaveBeenCalledTimes(1);
+    expect(handlers.onSaveAs).toHaveBeenCalledTimes(1);
+    expect(handlers.onReveal).toHaveBeenCalledTimes(1);
+
+    await act(async () => rootButtons[7].click());
+    expect(handlers.onFitWindow).toHaveBeenCalledTimes(1);
 
     await act(async () => rootButtons.at(-1)?.click());
     expect(handlers.onShowAbout).toHaveBeenCalledTimes(1);
@@ -118,7 +134,8 @@ describe('ContextMenu', () => {
 
   it('uses single-level accordions in a stacked small-window menu', async () => {
     await renderMenu('stacked');
-    const [, openButton, fileButton] = getRootButtons();
+    const openButton = container.querySelector<HTMLButtonElement>('[data-menu-section="open"]')!;
+    const fileButton = container.querySelector<HTMLButtonElement>('[data-menu-section="files"]')!;
     const [openMenu, fileMenu] = Array.from(
       container.querySelectorAll<HTMLElement>('.context-submenu')
     );
@@ -136,7 +153,8 @@ describe('ContextMenu', () => {
 
   it('opens flyout submenus when their parent actions are clicked', async () => {
     await renderMenu('right');
-    const [, openButton, fileButton] = getRootButtons();
+    const openButton = container.querySelector<HTMLButtonElement>('[data-menu-section="open"]')!;
+    const fileButton = container.querySelector<HTMLButtonElement>('[data-menu-section="files"]')!;
     const [openMenu, fileMenu] = Array.from(
       container.querySelectorAll<HTMLElement>('.context-submenu')
     );
@@ -175,7 +193,7 @@ describe('ContextMenu', () => {
     'opens and closes a %s submenu with Right and Left arrows',
     async (direction) => {
       await renderMenu(direction);
-      const [, openButton] = getRootButtons();
+      const openButton = container.querySelector<HTMLButtonElement>('[data-menu-section="open"]')!;
       const openMenu = container.querySelector<HTMLElement>('#context-open-submenu');
       const firstOpenAction = openMenu?.querySelector<HTMLButtonElement>(
         'button.context-menu-item'

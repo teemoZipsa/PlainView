@@ -5,9 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../src/App';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const fixture = vi.hoisted(() => ({ path: null as string | null, loadDelayMs: 0 }));
-const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) =>
-  command === 'append_file_to_clipboard' ? { imageAvailable: true, fileAvailable: true } : null));
+const fixture = vi.hoisted(() => ({ path: null as string | null, loadDelayMs: 0, saveFails: false,
+  resizeFails: false, fullscreen: false, maximized: false }));
+const invoke = vi.hoisted(() => vi.fn(async (command: string, _args?: unknown) => {
+  if (command === 'resize_window' && fixture.resizeFails) throw new Error('test resize failure');
+  return command === 'append_file_to_clipboard' ? { imageAvailable: true, fileAvailable: true } : null;
+}));
+const windowActions = vi.hoisted(() => ({
+  setFullscreen: vi.fn(async (value: boolean) => { fixture.fullscreen = value; }),
+  unmaximize: vi.fn(async () => { fixture.maximized = false; }),
+  startDragging: vi.fn(async () => {}),
+  startResizeDragging: vi.fn(async (_direction: string) => {}),
+}));
 const newClipboardImage = vi.hoisted(() => vi.fn(async (_pixels: Uint8Array, _width: number, _height: number) => ({ close: async () => {} })));
 vi.mock('@tauri-apps/api/image', () => ({ Image: { new: newClipboardImage } }));
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ writeImage: async () => {}, writeText: async () => {} }));
@@ -16,7 +25,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke, convertFileSrc: (path: string) 
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
-    isFullscreen: async () => false, isMaximized: async () => false,
+    isFullscreen: async () => fixture.fullscreen, isMaximized: async () => fixture.maximized,
+    ...windowActions,
     onCloseRequested: async () => () => {}, onResized: async () => () => {},
     onFocusChanged: async () => () => {}, onMoved: async () => () => {},
     onDragDropEvent: async () => () => {}, center: async () => {},
@@ -25,8 +35,11 @@ vi.mock('@tauri-apps/api/window', () => ({
 vi.mock('../src/hooks/useImageLoader', () => {
   const loader = {
     loadSettings: async () => ({ rememberWindowPosition: false, backgroundMode: 'dark', locale: 'ko',
-      defaultFitMode: 'auto', loopNavigation: true, overlayHideDelayMs: 2000, customOpenApps: [] }),
-    saveSettings: async () => {},
+      defaultFitMode: 'auto', loopNavigation: true, overlayHideDelayMs: 2000, customOpenApps: [],
+      alwaysShowControls: false, showTransparencyGrid: false }),
+    saveSettings: async () => {
+      if (fixture.saveFails) throw { kind: 'settings_save_failed', message: 'test write failure' };
+    },
     getCliArgs: async () => fixture.path ? ['plainview', fixture.path] : ['plainview'],
     scanFolder: async () => ['C:/audit/1.png', 'C:/audit/2.png'],
     loadImage: async (path: string) => {
@@ -57,14 +70,34 @@ async function mount() {
   await settle();
 }
 
+async function pointer(target: Element, type: string, options: MouseEventInit = {}, pointerId = 1) {
+  await act(async () => {
+    const event = new MouseEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      clientX: 400, clientY: 300, ...options,
+    });
+    Object.defineProperties(event, { pointerId: { value: pointerId }, pointerType: { value: 'mouse' } });
+    target.dispatchEvent(event);
+  });
+}
+
 beforeEach(() => {
   fixture.path = null;
   fixture.loadDelayMs = 0;
+  fixture.saveFails = false;
+  fixture.resizeFails = false;
+  fixture.fullscreen = false;
+  fixture.maximized = false;
+  windowActions.setFullscreen.mockClear();
+  windowActions.unmaximize.mockClear();
+  windowActions.startDragging.mockClear();
+  windowActions.startResizeDragging.mockClear();
   invoke.mockClear();
   newClipboardImage.mockClear();
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
   vi.stubGlobal('cancelAnimationFrame', clearTimeout);
+  vi.spyOn(window, 'screen', 'get').mockReturnValue({ availWidth: 1920, availHeight: 1080 } as Screen);
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -78,6 +111,176 @@ afterEach(async () => {
 });
 
 describe('viewer interaction flows', () => {
+  it('moves a fitted image window only after an intentional center drag', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press('f');
+    const image = container.querySelector<HTMLElement>('.viewer-image')!;
+    const app = container.querySelector<HTMLElement>('.app-container')!;
+    expect(app.style.cursor).toBe('grab');
+    await pointer(image, 'pointerdown');
+    await pointer(app, 'pointermove', { clientX: 402, clientY: 301 });
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    await pointer(app, 'pointermove', { clientX: 408, clientY: 304 });
+    expect(windowActions.startDragging).toHaveBeenCalledTimes(1);
+    await pointer(app, 'pointermove', { clientX: 430 });
+    await pointer(app, 'pointerup');
+    expect(windowActions.startDragging).toHaveBeenCalledTimes(1);
+    expect(image.style.transform).toContain('translate(0px, 0px)');
+    expect(app.style.cursor).toBe('grab');
+  });
+
+  it('keeps clicks and double-click fullscreen available without moving the window', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    const image = container.querySelector<HTMLElement>('.viewer-image')!;
+    for (let click = 0; click < 2; click += 1) {
+      await pointer(image, 'pointerdown');
+      await pointer(image, 'pointermove', { clientX: 402 });
+      await pointer(image, 'pointerup');
+    }
+    await act(async () => image.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 })));
+    await settle();
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    expect(windowActions.setFullscreen).toHaveBeenCalledWith(true);
+  });
+
+  it('pans an oversized image while Alt-drag still moves the window', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press('0');
+    const image = container.querySelector<HTMLElement>('.viewer-image')!;
+    const app = container.querySelector<HTMLElement>('.app-container')!;
+    await pointer(image, 'pointerdown');
+    await pointer(app, 'pointermove', { clientX: 450, clientY: 310 });
+    await pointer(app, 'pointerup');
+    expect(image.style.transform).toContain('translate(50px, 10px)');
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    await pointer(image, 'pointerdown', { altKey: true });
+    await pointer(app, 'pointermove', { clientX: 430, altKey: true });
+    expect(windowActions.startDragging).toHaveBeenCalledTimes(1);
+    expect(image.style.transform).toContain('translate(50px, 10px)');
+  });
+
+  it('cancels pending drags on pointer release and ignores unrelated pointers', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    const image = container.querySelector<HTMLElement>('.viewer-image')!;
+    const app = container.querySelector<HTMLElement>('.app-container')!;
+    await pointer(image, 'pointerdown');
+    await pointer(app, 'pointermove', { clientX: 450 }, 2);
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    await pointer(app, 'pointercancel');
+    await pointer(app, 'pointermove', { clientX: 450 });
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    expect(app.style.cursor).toBe('grab');
+  });
+
+  it('keeps toolbar presses and fullscreen fitted images out of window dragging', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    const viewer = container.querySelector<HTMLElement>('.image-container')!;
+    const app = container.querySelector<HTMLElement>('.app-container')!;
+    const fitButton = container.querySelector<HTMLElement>('.overlay-window-fit-button')!;
+    await pointer(fitButton, 'pointerdown');
+    await pointer(app, 'pointermove', { clientX: 450 });
+    await pointer(app, 'pointerup');
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    viewer.focus();
+    await press('F11');
+    await pointer(viewer, 'pointerdown');
+    await pointer(app, 'pointermove', { clientX: 450 });
+    expect(windowActions.startDragging).not.toHaveBeenCalled();
+    expect(app.style.cursor).toBe('default');
+  });
+
+  it('restores the window independently of image zoom and uses the rotated dimensions', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    invoke.mockClear();
+    await press('0');
+    await press('f');
+    expect(invoke.mock.calls.some((call) => call[0] === 'resize_window')).toBe(false);
+    await press('0', { ctrlKey: true });
+    expect(invoke).toHaveBeenCalledWith('resize_window', { width: 1202, height: 802 });
+    await press('r');
+    await press('0', { ctrlKey: true });
+    expect(invoke).toHaveBeenLastCalledWith('resize_window', { width: 664, height: 996 });
+    expect(container.querySelector<HTMLImageElement>('.viewer-image')?.style.transform).toContain('90deg');
+  });
+
+  it('offers a visible window restore button and exits fullscreen and maximization before resizing', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press('F6');
+    await press('F6');
+    fixture.fullscreen = true;
+    fixture.maximized = true;
+    invoke.mockClear();
+    await act(async () => container.querySelector<HTMLButtonElement>('.overlay-window-fit-button')!.click());
+    await settle();
+    expect(windowActions.setFullscreen).toHaveBeenCalledWith(false);
+    expect(windowActions.unmaximize).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith('resize_window', { width: 1202, height: 802 });
+  });
+
+  it('reports a failed native window resize without losing the displayed image', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    fixture.resizeFails = true;
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press('0', { ctrlKey: true });
+    expect(container.querySelector('.toast-error')?.getAttribute('role')).toBe('alert');
+    expect(container.querySelector<HTMLImageElement>('.viewer-image')?.alt).toBe('1.png');
+  });
+
+  it('does not resize an empty window through the image-fit shortcut', async () => {
+    await mount();
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press('0', { ctrlKey: true });
+    expect(invoke.mock.calls.some((call) => call[0] === 'resize_window')).toBe(false);
+    expect(container.querySelector('.overlay-window-fit-button')).toBeNull();
+  });
+
+  it('keeps the context menu mounted through pointer-down so its window action can run', async () => {
+    fixture.path = 'C:/audit/1.png';
+    await mount();
+    const viewer = container.querySelector<HTMLElement>('.image-container')!;
+    await act(async () => viewer.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 100, clientY: 100,
+    })));
+    const action = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      .find((button) => button.textContent?.includes('창을 이미지 크기에 맞추기'))!;
+    await act(async () => action.dispatchEvent(new MouseEvent('pointerdown', {
+      bubbles: true, cancelable: true, button: 0, clientX: 100, clientY: 300,
+    })));
+    expect(action.isConnected).toBe(true);
+    invoke.mockClear();
+    await act(async () => action.click());
+    await settle();
+    expect(container.querySelector('.context-menu')).toBeNull();
+    expect(invoke).toHaveBeenCalledWith('resize_window', { width: 1202, height: 802 });
+  });
+
+  it('shows a failed settings save and preserves the previous display preferences', async () => {
+    await mount();
+    fixture.saveFails = true;
+    container.querySelector<HTMLElement>('.image-container')!.focus();
+    await press(',', { ctrlKey: true });
+    await act(async () => container.querySelector<HTMLInputElement>('#settings-always-show-controls')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('.settings-modal > .app-modal-actions .primary')!.click());
+    await settle();
+    expect(container.querySelector('.settings-modal')).not.toBeNull();
+    expect(container.querySelector('.toast-error')?.getAttribute('role')).toBe('alert');
+    await press('Escape');
+    await press(',', { ctrlKey: true });
+    expect(container.querySelector<HTMLInputElement>('#settings-always-show-controls')?.checked).toBe(false);
+  });
+
   it('opens settings from the empty screen, closes with Escape, and restores focus', async () => {
     await mount();
     const opener = container.querySelector<HTMLButtonElement>('.empty-utility-button')!;
