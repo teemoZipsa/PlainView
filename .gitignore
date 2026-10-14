@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local generated files (regenerable; keep source and test fixtures)
+Thumbs.db
+[Dd]esktop.ini
+*.tsbuildinfo
+/coverage/
